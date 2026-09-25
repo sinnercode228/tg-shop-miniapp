@@ -1,0 +1,33 @@
+# Full stack: bot + REST API (SQLite volume) and the Mini App served by nginx with /api proxied.
+# Telegram requires HTTPS for Mini Apps: expose `web` through a tunnel/reverse proxy and put
+# that URL into WEBAPP_URL.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
+    env_file: bot/.env
+    environment:
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081}
+      # Keep the database on the named volume (overrides the local path from bot/.env).
+      DATABASE_URL: sqlite+aiosqlite:////data/tgshop.db
+    volumes:
+      - tgshop-data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: webapp/Dockerfile
+      args:
+        VITE_API_MODE: http
+    depends_on:
+      - api
+    ports:
+      - "8081:80"
+    restart: unless-stopped
+
+volumes:
+  tgshop-data:

@@ -1,0 +1,91 @@
+@import 'tailwindcss';
+
+/*
+ * Colour tokens. Defaults are the Zernolist palette; inside Telegram, `applyTheme()` overwrites
+ * the --tg-* variables with the user's themeParams so the app matches their client theme.
+ */
+:root {
+  --tg-bg: #ffffff;
+  --tg-secondary-bg: #f6f1ec;
+  --tg-section-bg: #ffffff;
+  --tg-text: #1f1a17;
+  --tg-hint: #8a7f77;
+  --tg-link: #b4531a;
+  --tg-accent: #b4531a;
+  --tg-button: #c2410c;
+  --tg-button-text: #ffffff;
+  --tg-destructive: #d63b3b;
+  --app-line: color-mix(in srgb, var(--tg-hint) 22%, transparent);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-tg='true']) {
+    --tg-bg: #221d1a;
+    --tg-secondary-bg: #171311;
+    --tg-section-bg: #221d1a;
+    --tg-text: #f4ede7;
+    --tg-hint: #a0948b;
+    --tg-link: #f0955a;
+    --tg-accent: #f0955a;
+    --tg-button: #e0692a;
+    --tg-button-text: #ffffff;
+    --tg-destructive: #ff6b6b;
+    color-scheme: dark;
+  }
+}
+
+:root[data-scheme='dark'] {
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--tg-bg);
+  --color-page: var(--tg-secondary-bg);
+  --color-section: var(--tg-section-bg);
+  --color-fg: var(--tg-text);
+  --color-hint: var(--tg-hint);
+  --color-link: var(--tg-link);
+  --color-accent: var(--tg-accent);
+  --color-button: var(--tg-button);
+  --color-button-fg: var(--tg-button-text);
+  --color-danger: var(--tg-destructive);
+  --color-line: var(--app-line);
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+html,
+body {
+  background: var(--tg-secondary-bg);
+  color: var(--tg-text);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+body {
+  min-height: 100dvh;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.pressable {
+  transition:
+    transform 120ms ease,
+    opacity 120ms ease;
+}
+.pressable:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pressable:active {
+    transform: none;
+  }
+}

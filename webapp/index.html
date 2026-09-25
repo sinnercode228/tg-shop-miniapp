@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#1f1a17" />
+    <meta
+      name="description"
+      content="Zernolist — Telegram Mini App coffee &amp; tea shop (demo project)"
+    />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>Zernolist · Mini App</title>
+    <!-- Official Telegram WebApp SDK. Outside Telegram it loads but reports empty initData,
+         which switches the app to its browser fallback (in-page buttons, local haptics no-op). -->
+    <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

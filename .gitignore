@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+.venv/
+venv/
+
+# build outputs & caches
+dist/
+build/
+coverage/
+htmlcov/
+.coverage
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.tsbuildinfo
+.vite/
+
+# local config & data
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite3
+data/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

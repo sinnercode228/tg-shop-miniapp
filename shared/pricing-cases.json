@@ -1,0 +1,68 @@
+{
+  "$comment": "Contract test vectors. Both pytest (bot/tests/test_pricing_contract.py) and vitest (webapp/src/domain/pricing.contract.test.ts) must produce exactly these results.",
+  "cases": [
+    {
+      "name": "courier below free threshold",
+      "lines": [{ "unitPrice": 89000, "quantity": 1 }, { "unitPrice": 45000, "quantity": 2 }],
+      "delivery": "courier",
+      "promo": null,
+      "expected": { "subtotal": 179000, "discount": 0, "deliveryFee": 35000, "total": 214000, "stars": 1427, "promoCode": null, "promoError": null }
+    },
+    {
+      "name": "courier reaches free delivery",
+      "lines": [{ "unitPrice": 319000, "quantity": 1 }],
+      "delivery": "courier",
+      "promo": null,
+      "expected": { "subtotal": 319000, "discount": 0, "deliveryFee": 0, "total": 319000, "stars": 2127, "promoCode": null, "promoError": null }
+    },
+    {
+      "name": "pickup is always free",
+      "lines": [{ "unitPrice": 39000, "quantity": 1 }],
+      "delivery": "pickup",
+      "promo": null,
+      "expected": { "subtotal": 39000, "discount": 0, "deliveryFee": 0, "total": 39000, "stars": 260, "promoCode": null, "promoError": null }
+    },
+    {
+      "name": "percent promo rounds down to whole roubles",
+      "lines": [{ "unitPrice": 79000, "quantity": 1 }, { "unitPrice": 59000, "quantity": 1 }, { "unitPrice": 12345, "quantity": 1 }],
+      "delivery": "pickup",
+      "promo": "zerno10",
+      "expected": { "subtotal": 150345, "discount": 15000, "deliveryFee": 0, "total": 135345, "stars": 903, "promoCode": "ZERNO10", "promoError": null }
+    },
+    {
+      "name": "percent promo is capped",
+      "lines": [{ "unitPrice": 359000, "quantity": 4 }],
+      "delivery": "courier",
+      "promo": "ZERNO10",
+      "expected": { "subtotal": 1436000, "discount": 100000, "deliveryFee": 0, "total": 1336000, "stars": 8907, "promoCode": "ZERNO10", "promoError": null }
+    },
+    {
+      "name": "discount can drop order below free delivery threshold",
+      "lines": [{ "unitPrice": 310000, "quantity": 1 }],
+      "delivery": "courier",
+      "promo": "ZERNO10",
+      "expected": { "subtotal": 310000, "discount": 31000, "deliveryFee": 35000, "total": 314000, "stars": 2094, "promoCode": "ZERNO10", "promoError": null }
+    },
+    {
+      "name": "free delivery promo",
+      "lines": [{ "unitPrice": 49000, "quantity": 1 }],
+      "delivery": "courier",
+      "promo": " freedelivery ",
+      "expected": { "subtotal": 49000, "discount": 0, "deliveryFee": 0, "total": 49000, "stars": 327, "promoCode": "FREEDELIVERY", "promoError": null }
+    },
+    {
+      "name": "unknown promo is reported, not applied",
+      "lines": [{ "unitPrice": 49000, "quantity": 1 }],
+      "delivery": "courier",
+      "promo": "FREECOFFEE",
+      "expected": { "subtotal": 49000, "discount": 0, "deliveryFee": 35000, "total": 84000, "stars": 560, "promoCode": null, "promoError": "unknown" }
+    },
+    {
+      "name": "empty promo string is ignored",
+      "lines": [{ "unitPrice": 100, "quantity": 1 }],
+      "delivery": "pickup",
+      "promo": "   ",
+      "expected": { "subtotal": 100, "discount": 0, "deliveryFee": 0, "total": 100, "stars": 1, "promoCode": null, "promoError": null }
+    }
+  ]
+}

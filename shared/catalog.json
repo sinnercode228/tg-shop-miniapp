@@ -1,0 +1,876 @@
+{
+  "$comment": "Demo catalog of the fictional Zernolist coffee & tea shop. Prices are integer kopecks. Used by the backend (bot/tgshop/catalog) and the in-browser demo API (webapp/src/api/mock).",
+  "categories": [
+    {
+      "id": "coffee",
+      "name": {
+        "ru": "Кофе в зёрнах",
+        "en": "Coffee beans"
+      }
+    },
+    {
+      "id": "drip",
+      "name": {
+        "ru": "Дрип-пакеты",
+        "en": "Drip bags"
+      }
+    },
+    {
+      "id": "tea",
+      "name": {
+        "ru": "Чай",
+        "en": "Tea"
+      }
+    },
+    {
+      "id": "gear",
+      "name": {
+        "ru": "Для заваривания",
+        "en": "Brewing gear"
+      }
+    }
+  ],
+  "grindOptions": [
+    {
+      "id": "beans",
+      "name": {
+        "ru": "В зёрнах",
+        "en": "Whole bean"
+      }
+    },
+    {
+      "id": "espresso",
+      "name": {
+        "ru": "Под эспрессо",
+        "en": "Espresso"
+      }
+    },
+    {
+      "id": "filter",
+      "name": {
+        "ru": "Под фильтр",
+        "en": "Filter"
+      }
+    },
+    {
+      "id": "cezve",
+      "name": {
+        "ru": "Под турку",
+        "en": "Cezve"
+      }
+    }
+  ],
+  "pickupPoints": [
+    {
+      "id": "kofeynaya-12",
+      "name": {
+        "ru": "ул. Кофейная, 12",
+        "en": "12 Kofeynaya St."
+      },
+      "hours": {
+        "ru": "ежедневно 9:00–21:00",
+        "en": "daily 9am–9pm"
+      }
+    },
+    {
+      "id": "chayny-5",
+      "name": {
+        "ru": "Чайный пр-д, 5",
+        "en": "5 Chayny Ln."
+      },
+      "hours": {
+        "ru": "пн–сб 10:00–20:00",
+        "en": "Mon–Sat 10am–8pm"
+      }
+    }
+  ],
+  "products": [
+    {
+      "id": "ethiopia-yirgacheffe",
+      "categoryId": "coffee",
+      "name": {
+        "ru": "Эфиопия Иргачефф",
+        "en": "Ethiopia Yirgacheffe"
+      },
+      "subtitle": {
+        "ru": "Мытая обработка · светлая обжарка",
+        "en": "Washed · light roast"
+      },
+      "description": {
+        "ru": "Цветочный и яркий лот с высокогорья. Раскрывается в воронке и аэропрессе: чистая кислотность, долгое чайное послевкусие.",
+        "en": "A bright, floral highland lot. Shines in pour-over and AeroPress: clean acidity and a long tea-like finish."
+      },
+      "notes": [
+        {
+          "ru": "жасмин",
+          "en": "jasmine"
+        },
+        {
+          "ru": "бергамот",
+          "en": "bergamot"
+        },
+        {
+          "ru": "лимон",
+          "en": "lemon"
+        }
+      ],
+      "roast": 1,
+      "grindable": true,
+      "badge": "new",
+      "art": {
+        "kind": "bag",
+        "colors": [
+          "#F3C969",
+          "#2F4858"
+        ]
+      },
+      "variants": [
+        {
+          "id": "250g",
+          "label": {
+            "ru": "250 г",
+            "en": "250 g"
+          },
+          "price": 89000
+        },
+        {
+          "id": "1kg",
+          "label": {
+            "ru": "1 кг",
+            "en": "1 kg"
+          },
+          "price": 319000
+        }
+      ]
+    },
+    {
+      "id": "colombia-huila",
+      "categoryId": "coffee",
+      "name": {
+        "ru": "Колумбия Уила",
+        "en": "Colombia Huila"
+      },
+      "subtitle": {
+        "ru": "Мытая обработка · средняя обжарка",
+        "en": "Washed · medium roast"
+      },
+      "description": {
+        "ru": "Сбалансированный кофе на каждый день: сладкий, плотный, хорошо работает и в эспрессо, и в фильтре.",
+        "en": "A balanced everyday coffee: sweet and round, works equally well as espresso and filter."
+      },
+      "notes": [
+        {
+          "ru": "карамель",
+          "en": "caramel"
+        },
+        {
+          "ru": "красное яблоко",
+          "en": "red apple"
+        },
+        {
+          "ru": "какао",
+          "en": "cocoa"
+        }
+      ],
+      "roast": 2,
+      "grindable": true,
+      "art": {
+        "kind": "bag",
+        "colors": [
+          "#E4572E",
+          "#FFF3E0"
+        ]
+      },
+      "variants": [
+        {
+          "id": "250g",
+          "label": {
+            "ru": "250 г",
+            "en": "250 g"
+          },
+          "price": 79000
+        },
+        {
+          "id": "1kg",
+          "label": {
+            "ru": "1 кг",
+            "en": "1 kg"
+          },
+          "price": 279000
+        }
+      ]
+    },
+    {
+      "id": "brazil-cerrado",
+      "categoryId": "coffee",
+      "name": {
+        "ru": "Бразилия Серрадо",
+        "en": "Brazil Cerrado"
+      },
+      "subtitle": {
+        "ru": "Натуральная обработка · средне-тёмная",
+        "en": "Natural · medium-dark roast"
+      },
+      "description": {
+        "ru": "Орехово-шоколадная классика для капучино и турки. Низкая кислотность, плотное тело.",
+        "en": "Nutty chocolate classic for cappuccino and cezve. Low acidity, heavy body."
+      },
+      "notes": [
+        {
+          "ru": "фундук",
+          "en": "hazelnut"
+        },
+        {
+          "ru": "молочный шоколад",
+          "en": "milk chocolate"
+        }
+      ],
+      "roast": 3,
+      "grindable": true,
+      "art": {
+        "kind": "bag",
+        "colors": [
+          "#76B041",
+          "#1B2F1E"
+        ]
+      },
+      "variants": [
+        {
+          "id": "250g",
+          "label": {
+            "ru": "250 г",
+            "en": "250 g"
+          },
+          "price": 69000
+        },
+        {
+          "id": "1kg",
+          "label": {
+            "ru": "1 кг",
+            "en": "1 kg"
+          },
+          "price": 239000
+        }
+      ]
+    },
+    {
+      "id": "kenya-aa",
+      "categoryId": "coffee",
+      "name": {
+        "ru": "Кения AA",
+        "en": "Kenya AA"
+      },
+      "subtitle": {
+        "ru": "Мытая обработка · светлая обжарка",
+        "en": "Washed · light roast"
+      },
+      "description": {
+        "ru": "Сочный ягодный профиль с выраженной кислотностью. Для тех, кто любит яркий фильтр.",
+        "en": "Juicy berry profile with vivid acidity. For lovers of a bold filter cup."
+      },
+      "notes": [
+        {
+          "ru": "чёрная смородина",
+          "en": "blackcurrant"
+        },
+        {
+          "ru": "грейпфрут",
+          "en": "grapefruit"
+        },
+        {
+          "ru": "томат",
+          "en": "tomato"
+        }
+      ],
+      "roast": 1,
+      "grindable": true,
+      "art": {
+        "kind": "bag",
+        "colors": [
+          "#9B5DE5",
+          "#F1E9FF"
+        ]
+      },
+      "variants": [
+        {
+          "id": "250g",
+          "label": {
+            "ru": "250 г",
+            "en": "250 g"
+          },
+          "price": 99000
+        },
+        {
+          "id": "1kg",
+          "label": {
+            "ru": "1 кг",
+            "en": "1 kg"
+          },
+          "price": 359000
+        }
+      ]
+    },
+    {
+      "id": "blend-midnight",
+      "categoryId": "coffee",
+      "name": {
+        "ru": "Смесь «Полночь»",
+        "en": "Midnight blend"
+      },
+      "subtitle": {
+        "ru": "Эспрессо-смесь · тёмная обжарка",
+        "en": "Espresso blend · dark roast"
+      },
+      "description": {
+        "ru": "Домашняя эспрессо-смесь Бразилии и Индии. Густая крема и уверенный вкус в молоке.",
+        "en": "House espresso blend of Brazil and India. Thick crema and a confident taste with milk."
+      },
+      "notes": [
+        {
+          "ru": "тёмный шоколад",
+          "en": "dark chocolate"
+        },
+        {
+          "ru": "вишня",
+          "en": "cherry"
+        },
+        {
+          "ru": "специи",
+          "en": "spice"
+        }
+      ],
+      "roast": 4,
+      "grindable": true,
+      "art": {
+        "kind": "bag",
+        "colors": [
+          "#3D348B",
+          "#F7B801"
+        ]
+      },
+      "variants": [
+        {
+          "id": "250g",
+          "label": {
+            "ru": "250 г",
+            "en": "250 g"
+          },
+          "price": 75000
+        },
+        {
+          "id": "1kg",
+          "label": {
+            "ru": "1 кг",
+            "en": "1 kg"
+          },
+          "price": 259000
+        }
+      ]
+    },
+    {
+      "id": "drip-morning",
+      "categoryId": "drip",
+      "name": {
+        "ru": "Дрип-пакеты «Утро»",
+        "en": "Morning drip bags"
+      },
+      "subtitle": {
+        "ru": "Колумбия · по 12 г",
+        "en": "Colombia · 12 g each"
+      },
+      "description": {
+        "ru": "Свежемолотый кофе в фильтр-пакетах: повесьте на чашку, залейте водой 93 °C — готово за три минуты.",
+        "en": "Freshly ground coffee in hanging filters: hook it on a cup, pour 93 °C water, done in three minutes."
+      },
+      "notes": [
+        {
+          "ru": "карамель",
+          "en": "caramel"
+        },
+        {
+          "ru": "орех",
+          "en": "nut"
+        }
+      ],
+      "grindable": false,
+      "art": {
+        "kind": "drip",
+        "colors": [
+          "#FF9F1C",
+          "#FFF8EC"
+        ]
+      },
+      "variants": [
+        {
+          "id": "5pcs",
+          "label": {
+            "ru": "5 шт",
+            "en": "5 pcs"
+          },
+          "price": 45000
+        },
+        {
+          "id": "10pcs",
+          "label": {
+            "ru": "10 шт",
+            "en": "10 pcs"
+          },
+          "price": 85000
+        }
+      ]
+    },
+    {
+      "id": "drip-ethiopia",
+      "categoryId": "drip",
+      "name": {
+        "ru": "Дрип-пакеты Эфиопия",
+        "en": "Ethiopia drip bags"
+      },
+      "subtitle": {
+        "ru": "Эфиопия · по 12 г",
+        "en": "Ethiopia · 12 g each"
+      },
+      "description": {
+        "ru": "Цветочная Эфиопия в удобном формате для офиса и путешествий.",
+        "en": "Floral Ethiopia in a handy format for the office and travel."
+      },
+      "notes": [
+        {
+          "ru": "жасмин",
+          "en": "jasmine"
+        },
+        {
+          "ru": "персик",
+          "en": "peach"
+        }
+      ],
+      "grindable": false,
+      "badge": "new",
+      "art": {
+        "kind": "drip",
+        "colors": [
+          "#2EC4B6",
+          "#EFFFFD"
+        ]
+      },
+      "variants": [
+        {
+          "id": "5pcs",
+          "label": {
+            "ru": "5 шт",
+            "en": "5 pcs"
+          },
+          "price": 49000
+        },
+        {
+          "id": "10pcs",
+          "label": {
+            "ru": "10 шт",
+            "en": "10 pcs"
+          },
+          "price": 92000
+        }
+      ]
+    },
+    {
+      "id": "sencha-fukamushi",
+      "categoryId": "tea",
+      "name": {
+        "ru": "Сенча Фукамуси",
+        "en": "Fukamushi sencha"
+      },
+      "subtitle": {
+        "ru": "Зелёный чай · Япония",
+        "en": "Green tea · Japan"
+      },
+      "description": {
+        "ru": "Глубоко пропаренная сенча с насыщенным изумрудным настоем и сладким морским послевкусием.",
+        "en": "Deep-steamed sencha with a vivid emerald liquor and a sweet, marine finish."
+      },
+      "notes": [
+        {
+          "ru": "свежая трава",
+          "en": "fresh grass"
+        },
+        {
+          "ru": "умами",
+          "en": "umami"
+        }
+      ],
+      "grindable": false,
+      "art": {
+        "kind": "tin",
+        "colors": [
+          "#8AC926",
+          "#F4FBE8"
+        ]
+      },
+      "variants": [
+        {
+          "id": "50g",
+          "label": {
+            "ru": "50 г",
+            "en": "50 g"
+          },
+          "price": 59000
+        },
+        {
+          "id": "100g",
+          "label": {
+            "ru": "100 г",
+            "en": "100 g"
+          },
+          "price": 109000
+        }
+      ]
+    },
+    {
+      "id": "oolong-tieguanyin",
+      "categoryId": "tea",
+      "name": {
+        "ru": "Те Гуань Инь",
+        "en": "Tie Guan Yin"
+      },
+      "subtitle": {
+        "ru": "Улун · Китай",
+        "en": "Oolong · China"
+      },
+      "description": {
+        "ru": "Слабоферментированный улун с цветочным ароматом. Выдерживает до семи проливов в гайвани.",
+        "en": "A lightly oxidised oolong with a floral aroma. Holds up to seven infusions in a gaiwan."
+      },
+      "notes": [
+        {
+          "ru": "сирень",
+          "en": "lilac"
+        },
+        {
+          "ru": "сливки",
+          "en": "cream"
+        }
+      ],
+      "grindable": false,
+      "art": {
+        "kind": "tin",
+        "colors": [
+          "#1982C4",
+          "#EAF4FB"
+        ]
+      },
+      "variants": [
+        {
+          "id": "50g",
+          "label": {
+            "ru": "50 г",
+            "en": "50 g"
+          },
+          "price": 69000
+        },
+        {
+          "id": "100g",
+          "label": {
+            "ru": "100 г",
+            "en": "100 g"
+          },
+          "price": 129000
+        }
+      ]
+    },
+    {
+      "id": "shu-puer",
+      "categoryId": "tea",
+      "name": {
+        "ru": "Шу пуэр",
+        "en": "Shou pu-erh"
+      },
+      "subtitle": {
+        "ru": "Тёмный чай · Юньнань",
+        "en": "Dark tea · Yunnan"
+      },
+      "description": {
+        "ru": "Плотный, согревающий, с древесными и землистыми нотами. Хорош утром вместо кофе.",
+        "en": "Dense and warming with woody, earthy notes. A great morning alternative to coffee."
+      },
+      "notes": [
+        {
+          "ru": "дерево",
+          "en": "wood"
+        },
+        {
+          "ru": "финик",
+          "en": "date"
+        }
+      ],
+      "grindable": false,
+      "art": {
+        "kind": "tin",
+        "colors": [
+          "#6A4C93",
+          "#F3EEF9"
+        ]
+      },
+      "variants": [
+        {
+          "id": "50g",
+          "label": {
+            "ru": "50 г",
+            "en": "50 g"
+          },
+          "price": 65000
+        },
+        {
+          "id": "100g",
+          "label": {
+            "ru": "100 г",
+            "en": "100 g"
+          },
+          "price": 119000
+        }
+      ]
+    },
+    {
+      "id": "assam-golden",
+      "categoryId": "tea",
+      "name": {
+        "ru": "Ассам с золотыми типсами",
+        "en": "Golden tips Assam"
+      },
+      "subtitle": {
+        "ru": "Чёрный чай · Индия",
+        "en": "Black tea · India"
+      },
+      "description": {
+        "ru": "Солодовый чёрный чай с мёдом в аромате. Отлично дружит с молоком.",
+        "en": "Malty black tea with a honeyed aroma. Pairs perfectly with milk."
+      },
+      "notes": [
+        {
+          "ru": "солод",
+          "en": "malt"
+        },
+        {
+          "ru": "мёд",
+          "en": "honey"
+        }
+      ],
+      "grindable": false,
+      "art": {
+        "kind": "tin",
+        "colors": [
+          "#C8553D",
+          "#FFF1EC"
+        ]
+      },
+      "variants": [
+        {
+          "id": "50g",
+          "label": {
+            "ru": "50 г",
+            "en": "50 g"
+          },
+          "price": 49000
+        },
+        {
+          "id": "100g",
+          "label": {
+            "ru": "100 г",
+            "en": "100 g"
+          },
+          "price": 89000
+        }
+      ]
+    },
+    {
+      "id": "ivan-chai-thyme",
+      "categoryId": "tea",
+      "name": {
+        "ru": "Иван-чай с чабрецом",
+        "en": "Fireweed tea with thyme"
+      },
+      "subtitle": {
+        "ru": "Травяной сбор · без кофеина",
+        "en": "Herbal · caffeine-free"
+      },
+      "description": {
+        "ru": "Ферментированный иван-чай и душистый чабрец. Мягкий вечерний напиток.",
+        "en": "Fermented fireweed with fragrant thyme. A gentle evening drink."
+      },
+      "notes": [
+        {
+          "ru": "чабрец",
+          "en": "thyme"
+        },
+        {
+          "ru": "сухофрукты",
+          "en": "dried fruit"
+        }
+      ],
+      "grindable": false,
+      "art": {
+        "kind": "tin",
+        "colors": [
+          "#FF595E",
+          "#FFF0F0"
+        ]
+      },
+      "variants": [
+        {
+          "id": "50g",
+          "label": {
+            "ru": "50 г",
+            "en": "50 g"
+          },
+          "price": 39000
+        },
+        {
+          "id": "100g",
+          "label": {
+            "ru": "100 г",
+            "en": "100 g"
+          },
+          "price": 69000
+        }
+      ]
+    },
+    {
+      "id": "ceramic-dripper",
+      "categoryId": "gear",
+      "name": {
+        "ru": "Керамическая воронка",
+        "en": "Ceramic dripper"
+      },
+      "subtitle": {
+        "ru": "Для 1–2 чашек",
+        "en": "For 1–2 cups"
+      },
+      "description": {
+        "ru": "Конусная воронка со спиральными рёбрами для равномерной экстракции.",
+        "en": "A cone dripper with spiral ribs for an even extraction."
+      },
+      "notes": [],
+      "grindable": false,
+      "art": {
+        "kind": "dripper",
+        "colors": [
+          "#F4F1DE",
+          "#E07A5F"
+        ]
+      },
+      "variants": [
+        {
+          "id": "std",
+          "label": {
+            "ru": "Стандарт",
+            "en": "Standard"
+          },
+          "price": 149000
+        }
+      ]
+    },
+    {
+      "id": "paper-filters",
+      "categoryId": "gear",
+      "name": {
+        "ru": "Бумажные фильтры",
+        "en": "Paper filters"
+      },
+      "subtitle": {
+        "ru": "100 шт · для конусной воронки",
+        "en": "100 pcs · for cone drippers"
+      },
+      "description": {
+        "ru": "Небелёные фильтры без привкуса бумаги — предварительно промойте горячей водой.",
+        "en": "Unbleached filters with no papery taste — rinse with hot water before brewing."
+      },
+      "notes": [],
+      "grindable": false,
+      "art": {
+        "kind": "filters",
+        "colors": [
+          "#DDB892",
+          "#7F5539"
+        ]
+      },
+      "variants": [
+        {
+          "id": "std",
+          "label": {
+            "ru": "100 шт",
+            "en": "100 pcs"
+          },
+          "price": 39000
+        }
+      ]
+    },
+    {
+      "id": "gooseneck-kettle",
+      "categoryId": "gear",
+      "name": {
+        "ru": "Чайник с узким носиком",
+        "en": "Gooseneck kettle"
+      },
+      "subtitle": {
+        "ru": "0,6 л · для плиты",
+        "en": "0.6 l · stovetop"
+      },
+      "description": {
+        "ru": "Тонкая струя для точного пролива в воронку. Встроенный термометр в крышке.",
+        "en": "A thin, steady stream for precise pour-over. Built-in lid thermometer."
+      },
+      "notes": [],
+      "grindable": false,
+      "art": {
+        "kind": "kettle",
+        "colors": [
+          "#264653",
+          "#E9C46A"
+        ]
+      },
+      "variants": [
+        {
+          "id": "std",
+          "label": {
+            "ru": "0,6 л",
+            "en": "0.6 l"
+          },
+          "price": 299000
+        }
+      ]
+    },
+    {
+      "id": "gaiwan",
+      "categoryId": "gear",
+      "name": {
+        "ru": "Гайвань",
+        "en": "Gaiwan"
+      },
+      "subtitle": {
+        "ru": "Фарфор · 120 мл",
+        "en": "Porcelain · 120 ml"
+      },
+      "description": {
+        "ru": "Классическая гайвань для улунов и пуэров: крышка, чаша и блюдце.",
+        "en": "A classic gaiwan for oolongs and pu-erhs: lid, bowl and saucer."
+      },
+      "notes": [],
+      "grindable": false,
+      "art": {
+        "kind": "gaiwan",
+        "colors": [
+          "#FFFFFF",
+          "#3A86FF"
+        ]
+      },
+      "variants": [
+        {
+          "id": "std",
+          "label": {
+            "ru": "120 мл",
+            "en": "120 ml"
+          },
+          "price": 129000
+        }
+      ]
+    }
+  ]
+}

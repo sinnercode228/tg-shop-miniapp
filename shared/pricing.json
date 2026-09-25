@@ -1,0 +1,13 @@
+{
+  "$comment": "Single source of pricing parameters shared by the Python backend and the in-browser demo API. All money values are integer minor units (kopecks).",
+  "currency": "RUB",
+  "courierFee": 35000,
+  "freeDeliveryThreshold": 300000,
+  "maxQuantityPerLine": 20,
+  "maxLines": 30,
+  "kopecksPerStar": 150,
+  "promoCodes": {
+    "ZERNO10": { "kind": "percent", "value": 10, "maxDiscount": 100000 },
+    "FREEDELIVERY": { "kind": "free_delivery" }
+  }
+}
