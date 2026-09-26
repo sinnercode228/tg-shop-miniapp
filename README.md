@@ -1,5 +1,7 @@
 # Zernolist — магазин в Telegram Mini App
 
+**Русский** · [English](README.en.md)
+
 Магазин кофе и чая, который открывается прямо в Telegram. Покупатель ищет по каталогу, применяет промокод, выбирает курьера или самовывоз, платит звёздами (Stars) или при получении и потом следит за статусом заказа. Админу заказы приходят в бот, статус он меняет кнопками под уведомлением. Магазина «Zernolist» не существует, ассортимент и цены я сочинил.
 
 Демо в обычном браузере: https://sinnercode228.github.io/tg-shop-miniapp/
@@ -116,4 +118,4 @@ vitest: корзина, поиск, форматирование денег, д�
 
 ---
 
-MIT · [sinnercode228](https://github.com/sinnercode228) · Telegram [@sinnercode](https://t.me/sinnercode)
+Автор — Грешный Котик, беру заказы на похожие задачи: Telegram [@sinnercode](https://t.me/sinnercode). Лицензия [MIT](LICENSE).
