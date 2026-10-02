@@ -84,6 +84,10 @@
       }
     }
   ],
+  "deliveryWindows": {
+    "morning": "10:00–14:00",
+    "evening": "18:00–22:00"
+  },
   "products": [
     {
       "id": "ethiopia-yirgacheffe",

@@ -1,6 +1,10 @@
 import { create } from 'zustand';
+import { bundledCatalog } from '../domain/data';
 import type { Lang, LocalizedText } from '../domain/types';
 import { telegramLanguage } from '../telegram/sdk';
+
+// Courier windows come from shared/catalog.json — the bot prints the very same ones.
+const { morning, evening } = bundledCatalog.deliveryWindows;
 
 const ru = {
   tagline: 'Кофе и чай свежей обжарки',
@@ -43,8 +47,8 @@ const ru = {
   pickupPoint: 'Точка самовывоза',
   slot: 'Когда',
   slot_asap: 'Как можно скорее',
-  slot_morning: 'Утром, 9–12',
-  slot_evening: 'Вечером, 18–21',
+  slot_morning: `Утром, ${morning}`,
+  slot_evening: `Вечером, ${evening}`,
   contacts: 'Получатель',
   name: 'Имя',
   phone: 'Телефон',
@@ -137,8 +141,8 @@ const en: Dict = {
   pickupPoint: 'Pickup point',
   slot: 'When',
   slot_asap: 'As soon as possible',
-  slot_morning: 'Morning, 9–12',
-  slot_evening: 'Evening, 6–9pm',
+  slot_morning: `Morning, ${morning}`,
+  slot_evening: `Evening, ${evening}`,
   contacts: 'Recipient',
   name: 'Name',
   phone: 'Phone',

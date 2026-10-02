@@ -43,6 +43,7 @@ export interface Catalog {
   categories: Category[];
   grindOptions: GrindOption[];
   pickupPoints: PickupPoint[];
+  deliveryWindows: Record<Exclude<DeliverySlot, 'asap'>, string>;
   products: Product[];
 }
 

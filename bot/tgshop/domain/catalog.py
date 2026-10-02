@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from functools import cached_property
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .base import CamelModel
+from .enums import DeliverySlot
 from .errors import ValidationFailed
 
 Lang = Literal["ru", "en"]
@@ -68,7 +69,17 @@ class Catalog(CamelModel):
     categories: list[Category]
     grind_options: list[GrindOption]
     pickup_points: list[PickupPoint]
+    # Courier delivery windows; the Mini App shows the very same ones.
+    delivery_windows: dict[DeliverySlot, str]
     products: list[Product]
+
+    @model_validator(mode="after")
+    def _check_delivery_windows(self) -> Self:
+        # Fail at startup, not with a KeyError when an order message is built.
+        timed = {slot for slot in DeliverySlot if slot is not DeliverySlot.ASAP}
+        if set(self.delivery_windows) != timed:
+            raise ValueError(f"deliveryWindows must list exactly: {', '.join(sorted(timed))}")
+        return self
 
     @classmethod
     def from_file(cls, path: Path) -> Catalog:
