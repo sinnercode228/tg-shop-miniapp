@@ -1,121 +1,118 @@
-# Zernolist — магазин в Telegram Mini App
+# Zernolist — a Telegram Mini App shop
 
-**Русский** · [English](README.en.md)
-
-Магазин кофе и чая, который открывается прямо в Telegram. Покупатель ищет по каталогу, применяет промокод, выбирает курьера или самовывоз, платит звёздами (Stars) или при получении и потом следит за статусом заказа. Админу заказы приходят в бот, статус он меняет кнопками под уведомлением. Магазина «Zernolist» не существует, ассортимент и цены я сочинил.
-
-Демо в обычном браузере: https://sinnercode228.github.io/tg-shop-miniapp/
+**English** · [Русский](README.ru.md)
 
 <p>
-  <img src="docs/screenshots/catalog.png" width="260" alt="Каталог">
-  <img src="docs/screenshots/cart-dark.png" width="260" alt="Корзина с промокодом, тёмная тема">
-  <img src="docs/screenshots/stars-payment.png" width="260" alt="Демо-окно оплаты звёздами">
+  <img src="docs/screenshots/catalog.png" width="200" alt="Catalog">
+  <img src="docs/screenshots/cart-dark.png" width="200" alt="Cart with the ZERNO10 promo code, dark theme">
+  <img src="docs/screenshots/stars-payment.png" width="200" alt="Demo Stars payment sheet">
+  <img src="docs/screenshots/order-dark.png" width="200" alt="Paid order with its status timeline, dark theme">
 </p>
 
-В браузере нет главной кнопки Telegram, поэтому страница рисует свою (`FallbackMainButton`). Бэкенда у демо нет: данные отдаёт [`MockShopApi`](webapp/src/api/mock.ts), заказы лежат в `localStorage`, статусы сами двигаются через 30 секунд, 3 и 15 минут после оформления (у заказа со Stars — после оплаты). Вместо нативного окна оплаты Stars показывается имитация (`DemoInvoiceSheet`); оба компонента в [`Chrome.tsx`](webapp/src/components/Chrome.tsx). Скриншоты сняты в этом режиме, а не в клиенте Telegram.
+A coffee and tea shop that opens inside Telegram: a React Mini App, an aiogram 3 bot and a FastAPI backend in one Python process, orders in SQLite, payment in Telegram Stars or on receipt. The admin gets orders in the bot and changes their status with buttons under the notification. Zernolist does not exist: I made up the products, prices and pickup points, and nobody ordered this shop from me.
 
-## Деньги считаются в копейках
+Demo in a regular browser: https://sinnercode228.github.io/tg-shop-miniapp/. It has no backend: [`MockShopApi`](webapp/src/api/mock.ts) applies the same pricing and status rules in the browser, keeps orders in `localStorage` and moves them on 30 seconds, 3 minutes and 15 minutes after checkout (for a Stars order, after payment). A browser has no Telegram main button or Stars sheet, so the page draws `FallbackMainButton` and `DemoInvoiceSheet` ([`Chrome.tsx`](webapp/src/components/Chrome.tsx)). The screenshots were taken in this mode, not in a Telegram client. Inside Telegram, [`telegram/sdk.ts`](webapp/src/telegram/sdk.ts) copies `themeParams` into the `--tg-*` CSS variables behind the Tailwind tokens and rewrites them on `themeChanged`.
 
-Все суммы я держу в целых копейках, от [`shared/pricing.json`](shared/pricing.json) до колонок в базе. Звёзды считаются от суммы заказа со скидкой и доставкой: одна звезда стоит 150 копеек (`kopecksPerStar`), округление вверх, в пользу магазина. В [`domain/pricing.py`](bot/tgshop/domain/pricing.py) это целочисленное деление `-(-amount // rules.kopecks_per_star)`, без float.
+## What the server never trusts
 
-На скриншотах корзина на 1862 ₽ и окно оплаты на 1242 звезды: 186200 / 150 = 1241,33, округление вверх. Процентная скидка округляется вниз до целого рубля: `ZERNO10` на 1503,45 ₽ даёт 150 ₽, а не 150,35. Потолок у этого промокода 1000 ₽.
+The client sends cart lines as `productId`, `variantId`, `grind` and `quantity` ([`domain/schemas.py`](bot/tgshop/domain/schemas.py)). There is no price field, and extra fields are dropped. `OrderService._resolve` ([`services/orders.py`](bot/tgshop/services/orders.py)) takes the product, variant and price from [`shared/catalog.json`](shared/catalog.json) and merges duplicate lines. `test_client_supplied_prices_are_ignored` ([`test_api.py`](bot/tests/test_api.py)) posts a gaiwan with `"price": 1` and `total: 1` and checks that the order's `subtotal` is the catalog's 129000 kopecks.
 
-Цену из запроса сервер не использует. В схеме позиции корзины нет поля цены, а `OrderService._resolve` ([`services/orders.py`](bot/tgshop/services/orders.py)) берёт товар, вариант и цену из каталога:
+Money is integer kopecks from [`shared/pricing.json`](shared/pricing.json) to the database columns. In [`domain/pricing.py`](bot/tgshop/domain/pricing.py):
 
-> Resolve client items against the catalog. Client-side prices are never trusted.
+- a percent discount rounds down to a whole rouble: `ZERNO10` on 1503.45 ₽ gives 150 ₽, not 150.345, and is capped at 1000 ₽;
+- courier delivery is 350 ₽, free from 3000 ₽ counted after the discount, or with `FREEDELIVERY`;
+- one Star is 150 kopecks, rounded up without floats: `-(-amount // rules.kopecks_per_star)`. The screenshots show a 1862 ₽ cart and a 1242-Star sheet: 186200 / 150 = 1241.33, rounded up;
+- an unknown promo code is a `promoError` on `POST /api/quote` and a 422 `unknown_promo` on `POST /api/orders`.
 
-Тест `test_client_supplied_prices_are_ignored` в [`test_api.py`](bot/tests/test_api.py) отправляет гайвань с `"price": 1` и `total: 1` и проверяет, что `subtotal` в заказе равен каталожным 129000 копеек (1290 ₽).
+[`webapp/src/domain/pricing.ts`](webapp/src/domain/pricing.ts) repeats these rules for the cart and the demo API; in `http` mode the checkout screen shows the server's numbers from `POST /api/quote`. The 9 vectors in [`shared/pricing-cases.json`](shared/pricing-cases.json) run in both pytest ([`test_pricing.py`](bot/tests/test_pricing.py)) and vitest ([`pricing.contract.test.ts`](webapp/src/domain/pricing.contract.test.ts)), so both implementations are checked against the same expected numbers.
 
-Та же логика есть на TypeScript в [`webapp/src/domain/pricing.ts`](webapp/src/domain/pricing.ts): по ней считаются корзина и демо-API, а экран оформления в режиме `http` берёт расчёт у сервера (`POST /api/quote`). Чтобы две реализации не разъехались незаметно, в [`shared/pricing-cases.json`](shared/pricing-cases.json) лежат 9 векторов: порог бесплатной доставки (он считается от суммы после скидки), потолок скидки, неизвестный промокод, пустая строка вместо промокода и т. д. Их прогоняют и pytest ([`test_pricing.py`](bot/tests/test_pricing.py)), и vitest ([`pricing.contract.test.ts`](webapp/src/domain/pricing.contract.test.ts)). В TS звёзды и скидка считаются через `Math.ceil`/`Math.floor` поверх обычного деления: эти цифры только для корзины и демо, сумму к оплате сервер считает целыми числами.
+Order endpoints require `Authorization: tma <initData>` ([`api/deps.py`](bot/tgshop/api/deps.py)); `/api/catalog`, `/api/quote` and `/api/health` are public. [`security/init_data.py`](bot/tgshop/security/init_data.py) follows the Telegram docs: `secret = HMAC_SHA256("WebAppData", bot_token)`, then an HMAC of the sorted `key=value` pairs without `hash`, compared with `hmac.compare_digest`. initData is also rejected when:
 
-## Оплата: от `POST /api/orders` до `successful_payment`
+- a key appears twice (checked before the signature);
+- `auth_date` is more than 60 s in the future, or older than `INIT_DATA_TTL` (24 h by default; the setting does not accept less than 60 s);
+- `user` is missing or malformed, even under a valid signature.
 
-1. Mini App отправляет `POST /api/orders` с заголовком `Authorization: tma <initData>` ([`api/deps.py`](bot/tgshop/api/deps.py)).
-2. Сервер проверяет initData, заново считает цену и создаёт заказ в статусе `awaiting_payment` с зафиксированной суммой в звёздах (`stars_amount`).
-3. В том же ответе приходит ссылка на счёт от `createInvoiceLink`: валюта `XTR`, payload `order:<id>` ([`payments/stars.py`](bot/tgshop/payments/stars.py)).
-4. Mini App открывает её через `Telegram.WebApp.openInvoice` ([`api/http.ts`](webapp/src/api/http.ts)). Если окно закрыли, на странице заказа остаётся кнопка оплаты: пока заказ в `awaiting_payment`, она берёт новую ссылку через `POST /api/orders/{id}/invoice` ([`routes/orders.py`](bot/tgshop/api/routes/orders.py)).
-5. Telegram присылает `pre_checkout_query`, на ответ у бота 10 секунд. `check_payment` сверяет валюту, что платит владелец заказа, что заказ всё ещё ждёт оплаты и что сумма совпадает со `stars_amount`.
-6. Приходит `successful_payment`. `mark_paid` повторяет ту же проверку, сохраняет `telegram_payment_charge_id` (по нему потом делается возврат) и переводит заказ в `paid`. Только теперь админам уходит уведомление о новом заказе; заказы с оплатой при получении приходят к ним сразу.
+`test_algorithm_matches_telegram_docs_step_by_step` ([`test_init_data.py`](bot/tests/test_init_data.py)) derives the hash with `hmac` and `hashlib` directly, then compares `compute_hash` with it. The Bot API 8.0 `signature` field stays in the check string; only `hash` is excluded. The Ed25519 signature itself is not verified, only the HMAC.
 
-Telegram может доставить один и тот же апдейт повторно. `mark_paid` сначала проверяет, не записан ли этот charge id в заказ, и если записан, сразу возвращает заказ. В `test_full_stars_payment_flow` ([`test_order_service.py`](bot/tests/test_order_service.py)) `mark_paid` вызывается второй раз с тем же charge id, и второго уведомления админам не уходит. Колонка `telegram_payment_charge_id` объявлена с `unique=True` ([`db/models.py`](bot/tgshop/db/models.py)), так что один платёж нельзя записать на два заказа.
+Someone else's order returns the same 404 `not_found` as a missing one (`get_for_user`), so order ids cannot be probed.
 
-Бывает, что покупатель оплатил, а заказ за это время отменили. Тогда проверка в `mark_paid` не проходит, и сервис сам вызывает `refundStarPayment`, не дожидаясь поддержки. Бот пишет покупателю, что звёзды вернулись. Этот сценарий проверяет `test_payment_for_cancelled_order_is_refunded_automatically`.
+## Stars payment, step by step
 
-Статусы описаны явным графом в [`domain/status.py`](bot/tgshop/domain/status.py), всё остальное `ensure_transition` отклоняет. Схема по докстрингу модуля:
+1. `POST /api/orders` with `paymentMethod: "stars"` creates the order in `awaiting_payment` with a fixed `stars_amount`, calls `createInvoiceLink` (currency `XTR`, payload `order:<id>`, no provider token; [`payments/stars.py`](bot/tgshop/payments/stars.py)) and returns `invoiceUrl` in the same response.
+2. The Mini App opens it with `Telegram.WebApp.openInvoice` ([`api/http.ts`](webapp/src/api/http.ts)). If the sheet is closed, the order page keeps a pay button that gets a fresh link from `POST /api/orders/{id}/invoice` ([`routes/orders.py`](bot/tgshop/api/routes/orders.py)) while the order still awaits payment.
+3. Telegram sends `pre_checkout_query`, and the bot has 10 s to answer. `check_payment` checks the payload, the currency, that the payer owns the order, that it still awaits payment and that the amount equals `stars_amount`.
+4. On `successful_payment`, `mark_paid` repeats that check, stores `telegram_payment_charge_id` (refunds need it) and sets `paid`. Admins hear about a Stars order only now; pay-on-receipt orders reach them at once.
+5. A redelivered update whose charge id is already on the order returns early. `test_full_stars_payment_flow` ([`test_order_service.py`](bot/tests/test_order_service.py)) calls `mark_paid` twice and checks that admins are notified once.
+6. If the order cannot take the money (cancelled while the sheet was open, amount out of date), `mark_paid` calls `refundStarPayment` right away and the bot tells the customer. Covered by `test_payment_for_cancelled_order_is_refunded_automatically`.
+7. Later refunds: `/refund <id>` or the admin's inline button → `refundStarPayment` → `refunded`.
+
+I register the payments router first ([`bot/factory.py`](bot/tgshop/bot/factory.py)). No other router handles `pre_checkout_query` today; registering it first keeps one added later from taking the query. [`TelegramNotifier`](bot/tgshop/bot/notifier.py) logs a `TelegramAPIError` instead of raising it, so a blocked bot loses the notification, not the order.
+
+Statuses are an explicit graph in [`domain/status.py`](bot/tgshop/domain/status.py); `ensure_transition` rejects every other move. The diagram follows the module docstring:
 
 ```text
 awaiting_payment ──► paid ──► confirmed ──► in_delivery ──────► completed
       │                │          │    └──► ready_for_pickup ─► completed
       ▼                ▼          ▼
   cancelled        refunded   cancelled / refunded
-new ──► confirmed …          (оплата при получении, шага оплаты нет)
+new ──► confirmed …          (pay on receipt, no payment step)
 ```
 
-Поверх графа `allowed_transitions` учитывает способ оплаты: оплаченный звёздами заказ нельзя просто отменить, только вернуть деньги (`refunded`); заказ с оплатой при получении вернуть нельзя; `paid` руками не ставится вообще, он приходит только из платёжного потока. Кнопки под уведомлением для админа строятся из `allowed_transitions` ([`keyboards.py`](bot/tgshop/bot/keyboards.py)), поэтому недопустимого действия среди них нет.
+`allowed_transitions` also looks at the payment method: a paid Stars order can be refunded but not cancelled, a pay-on-receipt order cannot be refunded, and `paid` is never set by hand. The admin's buttons are built from it ([`keyboards.py`](bot/tgshop/bot/keyboards.py)). Each change goes to `order_events`, which the Mini App draws as the timeline; SQLite drops `tzinfo` on read, so every `datetime` column goes through the `UTCDateTime` type ([`db/models.py`](bot/tgshop/db/models.py)).
 
-Каждый переход пишется в `order_events` со временем, из этих записей Mini App рисует ленту статусов. SQLite при чтении теряет `tzinfo`, поэтому все `datetime` в моделях идут через тип `UTCDateTime` ([`db/models.py`](bot/tgshop/db/models.py)): наружу он отдаёт UTC, а naive datetime в базу не пускает.
+## Run
 
-Роутер платежей я подключаю к диспетчеру первым ([`factory.py`](bot/tgshop/bot/factory.py)). Других хендлеров `pre_checkout_query` сейчас нет, и порядок страхует на случай, если такой хендлер появится в другом роутере и перехватит запрос.
-
-Если бот заблокирован или сеть сбоит, [`TelegramNotifier`](bot/tgshop/bot/notifier.py) пишет `TelegramAPIError` в лог и дальше не пробрасывает. Заказ оформляется, только уведомление не доходит.
-
-Не доделано: неоплаченный заказ висит в `awaiting_payment`, пока админ не отменит его руками (`/status <id> cancelled`). [`OrderRepository.get`](bot/tgshop/db/repository.py) с `for_update=True` вызывает `with_for_update()`, но для SQLite SQLAlchemy `FOR UPDATE` не генерирует, и строка заказа на время транзакции не блокируется. Ручной возврат (`/refund` или кнопка у админа) вызывает `refundStarPayment` внутри открытой транзакции (`OrderService.refund`), и если после ответа Telegram коммит упадёт, звёзды уже вернутся, а статус заказа останется прежним.
-
-## Подпись initData и чужие заказы
-
-[`security/init_data.py`](bot/tgshop/security/init_data.py) проверяет подпись по алгоритму из документации Telegram: секретный ключ — HMAC-SHA256 от токена бота с ключом `"WebAppData"`, затем HMAC от отсортированных пар `key=value` без `hash`, и результат сравнивается с присланным через `hmac.compare_digest`. Ещё initData отклоняется, если:
-
-- она старше 24 часов (срок задаёт `INIT_DATA_TTL`, меньше 60 секунд настройка не примет);
-- `auth_date` больше чем на 60 секунд в будущем (`auth_date_in_future`);
-- в строке повторяется ключ (Telegram таких строк не формирует);
-- в ней нет `user`: магазину нужен покупатель.
-
-Тест `test_algorithm_matches_telegram_docs_step_by_step` в [`test_init_data.py`](bot/tests/test_init_data.py) считает ожидаемый хеш по шагам документации напрямую через `hmac` и `hashlib` и только потом сверяет с ним `compute_hash`. Соседний тест фиксирует, что поле `signature` из Bot API 8.0 входит в строку проверки: исключается только `hash`. Саму Ed25519-подпись код не проверяет, только HMAC.
-
-Чужой заказ по id не отдаётся, и ответ на него такой же, как на несуществующий: 404 `not_found`. Так `get_for_user` не даёт перебором id узнать, какие заказы существуют.
-
-## Тема и кнопки Telegram
-
-[`telegram/sdk.ts`](webapp/src/telegram/sdk.ts) переносит `themeParams` в CSS-переменные `--tg-*`, на них построены токены Tailwind; на `themeChanged` переменные перезаписываются. Вне Telegram их задаёт [`index.css`](webapp/src/index.css) с учётом `prefers-color-scheme`.
-
-`useMainButton` из [`telegram/hooks.ts`](webapp/src/telegram/hooks.ts) в Telegram управляет нативной `MainButton`, а в браузере кладёт то же состояние в zustand-стор, откуда его рисует `FallbackMainButton`; `useBackButton` показывает `BackButton`, пока экран смонтирован. Вибрация в Telegram идёт через `HapticFeedback` (WebApp 6.1+), в браузере `navigator.vibrate` вызывается только после реального жеста (`navigator.userActivation.hasBeenActive`).
-
-## Поднять у себя
-
-Mini App в [`webapp/`](webapp) написан на React 19, Vite, TypeScript, Tailwind CSS 4 и zustand. В [`bot/`](bot) aiogram 3 и FastAPI работают в одном процессе, база подключена через SQLAlchemy 2 (async) и aiosqlite. Каталог и правила цен лежат в [`shared/`](shared), их читают обе стороны. Каждая группа команд ниже запускается из корня репозитория.
+The Mini App in [`webapp/`](webapp) uses React 19, Vite, TypeScript, Tailwind CSS 4 and zustand. In [`bot/`](bot), aiogram 3 and FastAPI share one process with SQLAlchemy 2 (async) and aiosqlite. Both sides read the catalog and pricing rules from [`shared/`](shared). Each block starts from the repository root.
 
 ```bash
-# Демо без бэкенда, как на GitHub Pages
-cd webapp && npm ci && npm run dev    # http://localhost:5173
+# Mini App on mock data, as on GitHub Pages (Node 22)
+cd webapp && npm ci && npm run dev        # http://localhost:5173
+```
 
-# Бот + API
+```bash
+# API (Python 3.12+)
 cd bot
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env           # BOT_TOKEN от @BotFather, ADMIN_IDS, WEBAPP_URL
-python -m tgshop --mode all    # long polling + API на :8080; есть --mode bot и --mode api
+cp .env.example .env
+python -m tgshop --mode api               # :8080, OpenAPI at /api/docs
+```
 
-# Mini App поверх настоящего API (Vite проксирует /api на :8080)
+```bash
+# Mini App against that API; Vite proxies /api to :8080
 cd webapp && VITE_API_MODE=http npm run dev
 ```
 
-Остальные переменные (`DATABASE_URL`, `API_HOST`, `API_PORT`, `CORS_ORIGINS`, `INIT_DATA_TTL`, `STARS_ENABLED`, `LOG_LEVEL`) перечислены в [`bot/.env.example`](bot/.env.example). В режиме `http` в браузере работают каталог и расчёт цены (`/api/catalog`, `/api/quote`), а заказы требуют initData: без неё API отвечает 401, так что оформить заказ можно только из клиента Telegram.
+`--mode api` runs with the example `.env` as is. `--mode all` (the default, bot and API) and `--mode bot` set the bot's commands and menu button on startup, so they need a real `BOT_TOKEN` from @BotFather; with the placeholder token they exit with `TelegramUnauthorizedError`. Admin user ids go into `ADMIN_IDS`; the other variables are listed in [`bot/.env.example`](bot/.env.example).
 
-Всё вместе в Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN`, затем `docker compose up --build`. API слушает `:8080`, Mini App отдаёт nginx на `:8081` и проксирует `/api`. Telegram открывает Mini App только по HTTPS, поэтому для проверки в клиенте нужен туннель или обратный прокси, а его адрес указывается в `WEBAPP_URL`.
+In a browser, `http` mode can load `/api/catalog` and `/api/quote`, but orders get a 401 without initData, so placing one needs the Telegram client. `WEBAPP_URL` defaults to the GitHub Pages demo, which runs on mock data and never calls your API; point it at an HTTPS address that serves an `http` build.
 
-## 107 + 36 тестов
+Docker: `cp bot/.env.example bot/.env`, set `BOT_TOKEN`, then `docker compose up --build`. The API listens on `:8080`; nginx serves the Mini App, built with `VITE_API_MODE=http`, on `:8081` and proxies `/api`. Telegram opens Mini Apps over HTTPS only, so put a tunnel or reverse proxy in front of `:8081` and its URL into `WEBAPP_URL`.
+
+Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Node 22):
 
 ```bash
-(cd bot && pytest --cov)       # 107 тестов, покрытие 85%
-(cd webapp && npm test)        # 36 тестов, vitest
+(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 107 tests, 85 % coverage
+(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 36 vitest tests
 ```
 
-[CI](.github/workflows/ci.yml) гоняет оба набора вместе с ruff, mypy strict и eslint на Python 3.12 и 3.14 и Node 22.
+[`tests/test_bot.py`](bot/tests/test_bot.py) runs the bot handlers without aiogram mocks: real `Update` objects go through a real `Dispatcher` with routing, filters and DI, and a `RecordingSession` records each Bot API call in place of the network. vitest covers the cart, search, money formatting, the demo API, the 9 pricing vectors and three UI scenarios in jsdom.
 
-pytest покрывает initData, цены и контрактные векторы, граф статусов, сервис заказов с фейковым платёжным шлюзом (`FakePayments`), HTTP API через httpx и хендлеры бота. Хендлеры проверяются без моков aiogram: настоящие `Update` проходят через настоящий `Dispatcher` с роутингом, фильтрами и DI, а вместо сети стоит `RecordingSession`, которая записывает каждый вызов Bot API ([`tests/test_bot.py`](bot/tests/test_bot.py)).
+## Known limitations
 
-vitest: корзина, поиск, форматирование денег, демо-API, те же 9 векторов цен и три UI-сценария в jsdom поверх mock API. В Node 25 свой глобальный `localStorage` перекрывает jsdom-овский, поэтому [`src/test/setup.ts`](webapp/src/test/setup.ts) ставит вместо него in-memory хранилище.
+- The compensating refund for a payment the order cannot accept is one attempt ([`services/orders.py:283`](bot/tgshop/services/orders.py#L283)). If `refundStarPayment` raises `TelegramAPIError`, the handler does not catch it ([`handlers/payments.py:39`](bot/tgshop/bot/handlers/payments.py#L39) catches only `PaymentError`): the Stars stay charged and nothing retries.
+- A manual refund calls `refundStarPayment` inside the open database transaction ([`services/orders.py:304`](bot/tgshop/services/orders.py#L304)). If the commit fails after Telegram answers, the customer has the Stars back and the order keeps its old status.
+- `with_for_update()` ([`db/repository.py:27`](bot/tgshop/db/repository.py#L27)) compiles to a plain `SELECT` on SQLite, so `mark_paid` does not lock the order row between the check and the update. `unique=True` on `telegram_payment_charge_id` ([`db/models.py:82`](bot/tgshop/db/models.py#L82)) only stops one charge from landing on two orders. The `postgres` extra is declared in [`pyproject.toml`](bot/pyproject.toml), but no test or CI job runs against Postgres.
+- An unpaid Stars order stays in `awaiting_payment` until an admin cancels it with `/status <id> cancelled` ([`handlers/admin.py:73`](bot/tgshop/bot/handlers/admin.py#L73)); nothing expires it.
+- After `openInvoice` the order page reloads once ([`OrderPage.tsx:35`](webapp/src/pages/OrderPage.tsx#L35)). In `http` mode the order turns `paid` only after the bot reads `successful_payment` over long polling, so that reload can still show `awaiting_payment`. There is no polling.
+- `openInvoice` can report `pending`; [`CheckoutPage.tsx:134`](webapp/src/pages/CheckoutPage.tsx#L134) and [`OrderPage.tsx:33`](webapp/src/pages/OrderPage.tsx#L33) treat anything but `paid` as cancelled.
+- The bot accepts orders as `web_app_data` ([`handlers/webapp.py`](bot/tgshop/bot/handlers/webapp.py)), and `/start` sends the reply-keyboard button that launch mode needs ([`handlers/common.py:16`](bot/tgshop/bot/handlers/common.py#L16)), but the Mini App never calls `sendData`: [`telegram/sdk.ts:69`](webapp/src/telegram/sdk.ts#L69) only declares it.
+- Delivery slots read differently: 9–12 / 18–21 in the Mini App ([`i18n/index.ts:46`](webapp/src/i18n/index.ts#L46)), 10:00–14:00 / 18:00–22:00 in the bot's messages ([`texts.py:25`](bot/tgshop/bot/texts.py#L25)). Tracked in [#1](https://github.com/sinnercode228/tg-shop-miniapp/issues/1).
+- The schema comes from `create_all` at startup ([`db/session.py:34`](bot/tgshop/db/session.py#L34)); there are no migrations.
+- No test reaches [`bot/notifier.py`](bot/tgshop/bot/notifier.py), [`config.py`](bot/tgshop/config.py) or [`container.py`](bot/tgshop/container.py) (0 % coverage); [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) is at 62 %.
+- The demo API saves item titles and variant labels in Russian ([`api/mock.ts:160`](webapp/src/api/mock.ts#L160)); in English mode the order list ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) and the variant label on the order page ([`OrderPage.tsx:158`](webapp/src/pages/OrderPage.tsx#L158)) still show them in Russian.
+- The phone regex is written three times: [`domain/schemas.py:15`](bot/tgshop/domain/schemas.py#L15), [`api/mock.ts:22`](webapp/src/api/mock.ts#L22), [`pages/CheckoutPage.tsx:15`](webapp/src/pages/CheckoutPage.tsx#L15).
 
 ---
 
-Автор — Грешный Котик, беру заказы на похожие задачи: Telegram [@sinnercode](https://t.me/sinnercode). Лицензия [MIT](LICENSE).
+Built by Грешный Котик (sinnercode). I take freelance work like this: Telegram [@sinnercode](https://t.me/sinnercode). License: [MIT](LICENSE).
