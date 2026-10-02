@@ -20,12 +20,6 @@ STATUS_LABELS: dict[OrderStatus, str] = {
     OrderStatus.REFUNDED: "↩️ Возврат",
 }
 
-SLOT_LABELS: dict[DeliverySlot, str] = {
-    DeliverySlot.ASAP: "как можно скорее",
-    DeliverySlot.MORNING: "10:00–14:00",
-    DeliverySlot.EVENING: "18:00–22:00",
-}
-
 WELCOME = (
     "<b>Зернолист</b> — кофе свежей обжарки и чай в Telegram.\n\n"
     "Откройте витрину кнопкой ниже: каталог, корзина и оформление заказа — прямо в чате.\n\n"
@@ -60,6 +54,12 @@ def money(kopecks: int) -> str:
     return f"{whole} ₽" if kop == 0 else f"{whole},{kop:02d} ₽"
 
 
+def slot_label(slot: DeliverySlot, catalog: Catalog) -> str:
+    if slot is DeliverySlot.ASAP:
+        return "как можно скорее"
+    return catalog.delivery_windows[slot]
+
+
 def order_summary(order: OrderOut, catalog: Catalog, *, for_admin: bool = False) -> str:
     lines = [f"<b>Заказ №{order.id}</b> · {STATUS_LABELS[order.status]}", ""]
     for item in order.items:
@@ -83,7 +83,8 @@ def order_summary(order: OrderOut, catalog: Catalog, *, for_admin: bool = False)
         lines.append("Оплата: при получении")
 
     if order.delivery_method is DeliveryMethod.COURIER:
-        where = f"🚚 Курьер: {escape(order.address or '')} ({SLOT_LABELS[order.delivery_slot]})"
+        slot = slot_label(order.delivery_slot, catalog)
+        where = f"🚚 Курьер: {escape(order.address or '')} ({slot})"
     else:
         point = catalog.pickup_point(order.pickup_point_id or "")
         where = f"🏪 Самовывоз: {escape(point.name.ru)}"
