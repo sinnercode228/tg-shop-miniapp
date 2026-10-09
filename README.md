@@ -13,6 +13,31 @@ A coffee and tea shop that opens inside Telegram: a React Mini App, an aiogram 3
 
 Demo in a regular browser: https://sinnercode228.github.io/tg-shop-miniapp/. It has no backend: [`MockShopApi`](webapp/src/api/mock.ts) applies the same pricing and status rules in the browser, keeps orders in `localStorage` and moves them on 30 seconds, 3 minutes and 15 minutes after checkout (for a Stars order, after payment). A browser has no Telegram main button or Stars sheet, so the page draws `FallbackMainButton` and `DemoInvoiceSheet` ([`Chrome.tsx`](webapp/src/components/Chrome.tsx)). The screenshots were taken in this mode, not in a Telegram client. Inside Telegram, [`telegram/sdk.ts`](webapp/src/telegram/sdk.ts) copies `themeParams` into the `--tg-*` CSS variables behind the Tailwind tokens and rewrites them on `themeChanged`.
 
+## How a Stars order moves through the Mini App, API and bot
+
+In the default `--mode all` the API and the bot are one process with one shared `OrderService`. The diagram draws them apart because the Mini App reaches the API over HTTP, while Telegram reaches the bot through updates.
+
+```mermaid
+sequenceDiagram
+    participant M as Mini App
+    participant A as API
+    participant T as Telegram
+    participant B as Bot
+    participant Ad as Admin
+    M->>A: POST /api/orders, paymentMethod stars
+    Note over A: prices from shared/catalog.json, order in awaiting_payment
+    A->>T: createInvoiceLink, XTR, payload order:N
+    A-->>M: 201 with invoiceUrl
+    M->>T: openInvoice(invoiceUrl)
+    T->>B: pre_checkout_query
+    B->>T: answerPreCheckoutQuery after check_payment
+    T->>B: successful_payment with charge id
+    Note over B: mark_paid sets paid and stores the charge id
+    B->>Ad: new order message with status buttons
+```
+
+Write-up on the whole path and on why a redelivered `successful_payment` does not mark an order paid twice: [How Zernolist prices an order on the server and accepts each Telegram Stars charge once](https://github.com/sinnercode228/sinnercode228/blob/main/notes/zernolist-stars-payments.md).
+
 ## What the server never trusts
 
 The client sends cart lines as `productId`, `variantId`, `grind` and `quantity` ([`domain/schemas.py`](bot/tgshop/domain/schemas.py)). There is no price field, and extra fields are dropped. `OrderService._resolve` ([`services/orders.py`](bot/tgshop/services/orders.py)) takes the product, variant and price from [`shared/catalog.json`](shared/catalog.json) and merges duplicate lines. `test_client_supplied_prices_are_ignored` ([`test_api.py`](bot/tests/test_api.py)) posts a gaiwan with `"price": 1` and `total: 1` and checks that the order's `subtotal` is the catalog's 129000 kopecks.
@@ -92,8 +117,8 @@ Docker: `cp bot/.env.example bot/.env`, set `BOT_TOKEN`, then `docker compose up
 Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Node 22):
 
 ```bash
-(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 107 tests, 85 % coverage
-(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 36 vitest tests
+(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 114 tests, 86 % coverage
+(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 40 vitest tests
 ```
 
 [`tests/test_bot.py`](bot/tests/test_bot.py) runs the bot handlers without aiogram mocks: real `Update` objects go through a real `Dispatcher` with routing, filters and DI, and a `RecordingSession` records each Bot API call in place of the network. vitest covers the cart, search, money formatting, the demo API, the 9 pricing vectors and three UI scenarios in jsdom.
@@ -107,7 +132,6 @@ Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Nod
 - After `openInvoice` the order page reloads once ([`OrderPage.tsx:35`](webapp/src/pages/OrderPage.tsx#L35)). In `http` mode the order turns `paid` only after the bot reads `successful_payment` over long polling, so that reload can still show `awaiting_payment`. There is no polling.
 - `openInvoice` can report `pending`; [`CheckoutPage.tsx:134`](webapp/src/pages/CheckoutPage.tsx#L134) and [`OrderPage.tsx:33`](webapp/src/pages/OrderPage.tsx#L33) treat anything but `paid` as cancelled.
 - The bot accepts orders as `web_app_data` ([`handlers/webapp.py`](bot/tgshop/bot/handlers/webapp.py)), and `/start` sends the reply-keyboard button that launch mode needs ([`handlers/common.py:16`](bot/tgshop/bot/handlers/common.py#L16)), but the Mini App never calls `sendData`: [`telegram/sdk.ts:69`](webapp/src/telegram/sdk.ts#L69) only declares it.
-- Delivery slots read differently: 9–12 / 18–21 in the Mini App ([`i18n/index.ts:46`](webapp/src/i18n/index.ts#L46)), 10:00–14:00 / 18:00–22:00 in the bot's messages ([`texts.py:25`](bot/tgshop/bot/texts.py#L25)). Tracked in [#1](https://github.com/sinnercode228/tg-shop-miniapp/issues/1).
 - The schema comes from `create_all` at startup ([`db/session.py:34`](bot/tgshop/db/session.py#L34)); there are no migrations.
 - No test reaches [`bot/notifier.py`](bot/tgshop/bot/notifier.py), [`config.py`](bot/tgshop/config.py) or [`container.py`](bot/tgshop/container.py) (0 % coverage); [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) is at 62 %.
 - The demo API saves item titles and variant labels in Russian ([`api/mock.ts:160`](webapp/src/api/mock.ts#L160)); in English mode the order list ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) and the variant label on the order page ([`OrderPage.tsx:158`](webapp/src/pages/OrderPage.tsx#L158)) still show them in Russian.

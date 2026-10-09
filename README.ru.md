@@ -13,6 +13,31 @@
 
 Демо в обычном браузере: https://sinnercode228.github.io/tg-shop-miniapp/. Бэкенда у него нет: [`MockShopApi`](webapp/src/api/mock.ts) применяет в браузере те же правила цен и статусов, хранит заказы в `localStorage` и двигает их через 30 секунд, 3 и 15 минут после оформления (у заказа со Stars — после оплаты). В браузере нет главной кнопки Telegram и окна оплаты Stars, поэтому страница рисует `FallbackMainButton` и `DemoInvoiceSheet` ([`Chrome.tsx`](webapp/src/components/Chrome.tsx)). Скриншоты сняты в этом режиме, а не в клиенте Telegram. Внутри Telegram [`telegram/sdk.ts`](webapp/src/telegram/sdk.ts) переносит `themeParams` в CSS-переменные `--tg-*`, на которых построены токены Tailwind, и перезаписывает их на `themeChanged`.
 
+## Как заказ со Stars проходит через Mini App, API и бот
+
+В режиме `--mode all` (он по умолчанию) API и бот — один процесс с общим `OrderService`. На схеме они разнесены, потому что Mini App ходит в API по HTTP, а Telegram общается с ботом через апдейты.
+
+```mermaid
+sequenceDiagram
+    participant M as Mini App
+    participant A as API
+    participant T as Telegram
+    participant B as Бот
+    participant Ad as Админ
+    M->>A: POST /api/orders, paymentMethod stars
+    Note over A: цены из shared/catalog.json, заказ в awaiting_payment
+    A->>T: createInvoiceLink, XTR, payload order:N
+    A-->>M: 201 и invoiceUrl
+    M->>T: openInvoice(invoiceUrl)
+    T->>B: pre_checkout_query
+    B->>T: answerPreCheckoutQuery после check_payment
+    T->>B: successful_payment с charge id
+    Note over B: mark_paid ставит paid и сохраняет charge id
+    B->>Ad: сообщение о новом заказе с кнопками статусов
+```
+
+Разбор всего пути и того, почему повторный `successful_payment` не отмечает заказ оплаченным второй раз: [Как Zernolist считает цену заказа на сервере и принимает каждый платёж в Telegram Stars один раз](https://github.com/sinnercode228/sinnercode228/blob/main/notes/zernolist-stars-payments.ru.md).
+
 ## Чему сервер не верит
 
 Позиции корзины клиент присылает как `productId`, `variantId`, `grind` и `quantity` ([`domain/schemas.py`](bot/tgshop/domain/schemas.py)). Поля цены нет, лишние поля отбрасываются. `OrderService._resolve` ([`services/orders.py`](bot/tgshop/services/orders.py)) берёт товар, вариант и цену из [`shared/catalog.json`](shared/catalog.json) и склеивает дубли. Тест `test_client_supplied_prices_are_ignored` ([`test_api.py`](bot/tests/test_api.py)) отправляет гайвань с `"price": 1` и `total: 1` и проверяет, что `subtotal` заказа равен каталожным 129000 копеек.
@@ -92,8 +117,8 @@ Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN`, затем `
 Проверки, те же, что в [CI](.github/workflows/ci.yml) (Python 3.12 и 3.14, Node 22):
 
 ```bash
-(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 107 тестов, покрытие 85 %
-(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 36 тестов vitest
+(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 114 тестов, покрытие 86 %
+(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 40 тестов vitest
 ```
 
 [`tests/test_bot.py`](bot/tests/test_bot.py) проверяет хендлеры бота без моков aiogram: настоящие `Update` проходят через настоящий `Dispatcher` с роутингом, фильтрами и DI, а вместо сети стоит `RecordingSession`, которая записывает каждый вызов Bot API. vitest покрывает корзину, поиск, форматирование денег, демо-API, те же 9 векторов цен и три UI-сценария в jsdom.
@@ -107,7 +132,6 @@ Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN`, затем `
 - После `openInvoice` страница заказа один раз делает reload ([`OrderPage.tsx:35`](webapp/src/pages/OrderPage.tsx#L35)). В режиме `http` статус станет `paid` только после того, как бот прочитает `successful_payment` по long polling, поэтому этот reload может ещё показать `awaiting_payment`. Опроса нет.
 - `openInvoice` может вернуть `pending`; [`CheckoutPage.tsx:134`](webapp/src/pages/CheckoutPage.tsx#L134) и [`OrderPage.tsx:33`](webapp/src/pages/OrderPage.tsx#L33) считают отменой всё, что не `paid`.
 - Бот принимает заказы через `web_app_data` ([`handlers/webapp.py`](bot/tgshop/bot/handlers/webapp.py)), а `/start` присылает нужную для этого кнопку reply-клавиатуры ([`handlers/common.py:16`](bot/tgshop/bot/handlers/common.py#L16)), но Mini App нигде не вызывает `sendData`: в [`telegram/sdk.ts:69`](webapp/src/telegram/sdk.ts#L69) метод только объявлен.
-- Слоты доставки подписаны по-разному: «9–12 / 18–21» в Mini App ([`i18n/index.ts:46`](webapp/src/i18n/index.ts#L46)), «10:00–14:00 / 18:00–22:00» в сообщениях бота ([`texts.py:25`](bot/tgshop/bot/texts.py#L25)). Задача [#1](https://github.com/sinnercode228/tg-shop-miniapp/issues/1).
 - Схема создаётся через `create_all` на старте ([`db/session.py:34`](bot/tgshop/db/session.py#L34)), миграций нет.
 - Тестами не покрыты [`bot/notifier.py`](bot/tgshop/bot/notifier.py), [`config.py`](bot/tgshop/config.py) и [`container.py`](bot/tgshop/container.py) (0 %); [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) — 62 %.
 - Демо-API сохраняет названия позиций и фасовку на русском ([`api/mock.ts:160`](webapp/src/api/mock.ts#L160)); в английском режиме список заказов ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) и фасовка на странице заказа ([`OrderPage.tsx:158`](webapp/src/pages/OrderPage.tsx#L158)) показывают их по-русски.
