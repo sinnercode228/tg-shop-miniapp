@@ -12,7 +12,7 @@ from tgshop.db.repository import OrderRepository
 from tgshop.db.session import SessionFactory
 from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import DeliveryMethod, OrderSource, OrderStatus, PaymentMethod
-from tgshop.domain.errors import NotFound, PaymentError, ValidationFailed
+from tgshop.domain.errors import InvalidTransition, NotFound, PaymentError, ValidationFailed
 from tgshop.domain.pricing import PricedLine, PricingRules, Quote, calculate_quote
 from tgshop.domain.schemas import (
     CartItemIn,
@@ -232,14 +232,20 @@ class OrderService:
         if target is OrderStatus.REFUNDED:
             return await self.refund(order_id)
         async with self._sessions() as session, session.begin():
-            order = await OrderRepository(session).get(order_id, for_update=True)
+            orders = OrderRepository(session)
+            order = await orders.get(order_id, for_update=True)
             if order is None:
                 raise NotFound(f"Order {order_id} not found")
             previous = order.status
             ensure_transition(
                 previous, target, delivery=order.delivery_method, payment=order.payment_method
             )
-            order.set_status(target, note)
+            if not await orders.move_status(order.id, previous, target):
+                # A payment or another admin changed the order after the read above (on
+                # SQLite it takes no lock). Refuse rather than overwrite what it wrote.
+                await session.refresh(order)
+                raise InvalidTransition(f"Order {order_id} is now '{order.status}'")
+            order.set_status(target, note)  # the row is updated; adds the event
             await session.flush()
             dto = _to_dto(order)
         await self._notifier.status_changed(dto, previous)
@@ -259,8 +265,10 @@ class OrderService:
         if order_id is None:
             raise PaymentError(f"Unexpected invoice payload {payload!r}")
 
+        claimed = False
         async with self._sessions() as session, session.begin():
-            order = await OrderRepository(session).get(order_id, for_update=True)
+            orders = OrderRepository(session)
+            order = await orders.get(order_id, for_update=True)
             if order is not None and order.telegram_payment_charge_id == charge_id:
                 return _to_dto(order)  # duplicated update — already processed
             error = check_payment(
@@ -271,12 +279,25 @@ class OrderService:
             )
             if error is None and order is not None:
                 previous = order.status
-                order.telegram_payment_charge_id = charge_id
-                order.set_status(OrderStatus.PAID)
-                await session.flush()
-                dto = _to_dto(order)
+                claimed = await orders.claim_payment(order.id, charge_id)
+                if claimed:
+                    order.set_status(OrderStatus.PAID)  # the row is updated; adds the event
+                    await session.flush()
+                    dto = _to_dto(order)
+                else:
+                    # Another update paid or cancelled the order after the check above
+                    # (on SQLite that read takes no lock). See what it wrote.
+                    await session.refresh(order)
+                    if order.telegram_payment_charge_id == charge_id:
+                        return _to_dto(order)  # the same update, handled concurrently
+                    error = check_payment(
+                        _to_dto(order),
+                        currency=currency,
+                        total_amount=total_amount,
+                        payer_id=payer_id,
+                    )
 
-        if error is not None or order is None:
+        if not claimed:
             # Money was taken but the order can't accept it (e.g. cancelled meanwhile):
             # give the Stars back immediately instead of leaving it for manual support.
             log.warning("refunding orphan payment %s for order %s: %s", charge_id, order_id, error)
