@@ -55,6 +55,22 @@ describe('MockShopApi', () => {
     expect(() => api.markPaid(order.id)).toThrow(ApiError);
   });
 
+  it('cancels a Stars order left unpaid for 30 minutes, as the bot does', async () => {
+    const api = make();
+    const { order } = await api.createOrder({ ...base, paymentMethod: 'stars' });
+    const { order: paidInTime } = await api.createOrder({ ...base, paymentMethod: 'stars' });
+    now += 29 * 60_000;
+    expect((await api.getOrder(order.id)).status).toBe('awaiting_payment');
+    api.markPaid(paidInTime.id);
+
+    now += 2 * 60_000;
+    const expired = await api.getOrder(order.id);
+    expect(expired.events.map((e) => e.status)).toEqual(['awaiting_payment', 'cancelled']);
+    expect(() => api.markPaid(order.id)).toThrow(ApiError);
+    const paid = await api.getOrder(paidInTime.id);
+    expect(paid.events.map((e) => e.status)).not.toContain('cancelled');
+  });
+
   it('validates delivery details, phone and promo codes', async () => {
     const api = make();
     await expect(

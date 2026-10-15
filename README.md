@@ -11,7 +11,7 @@
 
 A coffee and tea shop that opens inside Telegram: a React Mini App, an aiogram 3 bot and a FastAPI backend in one Python process, orders in SQLite, payment in Telegram Stars or on receipt. The admin gets orders in the bot and changes their status with buttons under the notification. Zernolist does not exist: I made up the products, prices and pickup points, and nobody ordered this shop from me.
 
-Demo in a regular browser: https://sinnercode228.github.io/tg-shop-miniapp/. It has no backend: [`MockShopApi`](webapp/src/api/mock.ts) applies the same pricing and status rules in the browser, keeps orders in `localStorage` and moves them on 30 seconds, 3 minutes and 15 minutes after checkout (for a Stars order, after payment). A browser has no Telegram main button or Stars sheet, so the page draws `FallbackMainButton` and `DemoInvoiceSheet` ([`Chrome.tsx`](webapp/src/components/Chrome.tsx)). The screenshots were taken in this mode, not in a Telegram client. Inside Telegram, [`telegram/sdk.ts`](webapp/src/telegram/sdk.ts) copies `themeParams` into the `--tg-*` CSS variables behind the Tailwind tokens and rewrites them on `themeChanged`.
+Demo in a regular browser: https://sinnercode228.github.io/tg-shop-miniapp/. It has no backend: [`MockShopApi`](webapp/src/api/mock.ts) applies the same pricing and status rules in the browser, keeps orders in `localStorage` and moves them on 30 seconds, 3 minutes and 15 minutes after checkout (for a Stars order, after payment). A Stars order left unpaid for 30 minutes is cancelled, as the bot does by default. A browser has no Telegram main button or Stars sheet, so the page draws `FallbackMainButton` and `DemoInvoiceSheet` ([`Chrome.tsx`](webapp/src/components/Chrome.tsx)). The screenshots were taken in this mode, not in a Telegram client. Inside Telegram, [`telegram/sdk.ts`](webapp/src/telegram/sdk.ts) copies `themeParams` into the `--tg-*` CSS variables behind the Tailwind tokens and rewrites them on `themeChanged`.
 
 ## How a Stars order moves through the Mini App, API and bot
 
@@ -119,7 +119,7 @@ Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Nod
 
 ```bash
 (cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 129 tests, 94 % coverage
-(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 40 vitest tests
+(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 41 vitest tests
 ```
 
 [`tests/test_bot.py`](bot/tests/test_bot.py) runs the bot handlers without aiogram mocks: real `Update` objects go through a real `Dispatcher` with routing, filters and DI, and a `RecordingSession` records each Bot API call in place of the network. vitest covers the cart, search, money formatting, the demo API, the 9 pricing vectors and three UI scenarios in jsdom.
@@ -131,11 +131,11 @@ Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Nod
 - The `postgres` extra is declared in [`pyproject.toml`](bot/pyproject.toml), but no test or CI job runs against Postgres.
 - After `openInvoice` the order page reloads once ([`OrderPage.tsx:35`](webapp/src/pages/OrderPage.tsx#L35)). In `http` mode the order turns `paid` only after the bot reads `successful_payment` over long polling, so that reload can still show `awaiting_payment`. There is no polling.
 - `openInvoice` can report `pending`; [`CheckoutPage.tsx:134`](webapp/src/pages/CheckoutPage.tsx#L134) and [`OrderPage.tsx:33`](webapp/src/pages/OrderPage.tsx#L33) treat anything but `paid` as cancelled.
-- The Mini App does not know about the payment time limit. After the payment sheet is closed, the order page says the order can be paid later from the order history ([`OrderPage.tsx:108`](webapp/src/pages/OrderPage.tsx#L108)) and shows no deadline, and the demo API never cancels an unpaid order.
+- The Mini App does not know about the payment time limit. After the payment sheet is closed, the order page says the order can be paid later from the order history ([`OrderPage.tsx:108`](webapp/src/pages/OrderPage.tsx#L108)) and shows no deadline.
 - The bot accepts orders as `web_app_data` ([`handlers/webapp.py`](bot/tgshop/bot/handlers/webapp.py)), and `/start` sends the reply-keyboard button that launch mode needs ([`handlers/common.py:16`](bot/tgshop/bot/handlers/common.py#L16)), but the Mini App never calls `sendData`: [`telegram/sdk.ts:69`](webapp/src/telegram/sdk.ts#L69) only declares it.
 - The schema comes from `create_all` at startup ([`db/session.py:34`](bot/tgshop/db/session.py#L34)); there are no migrations.
 - [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) is at 62 % test coverage.
-- The demo API saves item titles and variant labels in Russian ([`api/mock.ts:160`](webapp/src/api/mock.ts#L160)); in English mode the order list ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) and the variant label on the order page ([`OrderPage.tsx:158`](webapp/src/pages/OrderPage.tsx#L158)) still show them in Russian.
+- The demo API saves item titles and variant labels in Russian ([`api/mock.ts:162`](webapp/src/api/mock.ts#L162)); in English mode the order list ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) and the variant label on the order page ([`OrderPage.tsx:158`](webapp/src/pages/OrderPage.tsx#L158)) still show them in Russian.
 - The phone regex is written three times: [`domain/schemas.py:15`](bot/tgshop/domain/schemas.py#L15), [`api/mock.ts:22`](webapp/src/api/mock.ts#L22), [`pages/CheckoutPage.tsx:15`](webapp/src/pages/CheckoutPage.tsx#L15).
 
 ---

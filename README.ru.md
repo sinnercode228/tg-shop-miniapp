@@ -11,7 +11,7 @@
 
 Магазин кофе и чая, который открывается прямо в Telegram: Mini App на React, бот на aiogram 3 и API на FastAPI в одном Python-процессе, заказы в SQLite, оплата звёздами (Stars) или при получении. Админу заказы приходят в бот, статус он меняет кнопками под уведомлением. Магазина Zernolist не существует: ассортимент, цены и точки самовывоза я сочинил, и заказчика у этого магазина нет.
 
-Демо в обычном браузере: https://sinnercode228.github.io/tg-shop-miniapp/. Бэкенда у него нет: [`MockShopApi`](webapp/src/api/mock.ts) применяет в браузере те же правила цен и статусов, хранит заказы в `localStorage` и двигает их через 30 секунд, 3 и 15 минут после оформления (у заказа со Stars — после оплаты). В браузере нет главной кнопки Telegram и окна оплаты Stars, поэтому страница рисует `FallbackMainButton` и `DemoInvoiceSheet` ([`Chrome.tsx`](webapp/src/components/Chrome.tsx)). Скриншоты сняты в этом режиме, а не в клиенте Telegram. Внутри Telegram [`telegram/sdk.ts`](webapp/src/telegram/sdk.ts) переносит `themeParams` в CSS-переменные `--tg-*`, на которых построены токены Tailwind, и перезаписывает их на `themeChanged`.
+Демо в обычном браузере: https://sinnercode228.github.io/tg-shop-miniapp/. Бэкенда у него нет: [`MockShopApi`](webapp/src/api/mock.ts) применяет в браузере те же правила цен и статусов, хранит заказы в `localStorage` и двигает их через 30 секунд, 3 и 15 минут после оформления (у заказа со Stars — после оплаты). Stars-заказ, не оплаченный за 30 минут, отменяется, как и в боте по умолчанию. В браузере нет главной кнопки Telegram и окна оплаты Stars, поэтому страница рисует `FallbackMainButton` и `DemoInvoiceSheet` ([`Chrome.tsx`](webapp/src/components/Chrome.tsx)). Скриншоты сняты в этом режиме, а не в клиенте Telegram. Внутри Telegram [`telegram/sdk.ts`](webapp/src/telegram/sdk.ts) переносит `themeParams` в CSS-переменные `--tg-*`, на которых построены токены Tailwind, и перезаписывает их на `themeChanged`.
 
 ## Как заказ со Stars проходит через Mini App, API и бот
 
@@ -119,7 +119,7 @@ Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN`, затем `
 
 ```bash
 (cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 129 тестов, покрытие 94 %
-(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 40 тестов vitest
+(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 41 тест vitest
 ```
 
 [`tests/test_bot.py`](bot/tests/test_bot.py) проверяет хендлеры бота без моков aiogram: настоящие `Update` проходят через настоящий `Dispatcher` с роутингом, фильтрами и DI, а вместо сети стоит `RecordingSession`, которая записывает каждый вызов Bot API. vitest покрывает корзину, поиск, форматирование денег, демо-API, те же 9 векторов цен и три UI-сценария в jsdom.
@@ -131,11 +131,11 @@ Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN`, затем `
 - Extra `postgres` объявлен в [`pyproject.toml`](bot/pyproject.toml), но ни тесты, ни CI против Postgres не запускаются.
 - После `openInvoice` страница заказа один раз делает reload ([`OrderPage.tsx:35`](webapp/src/pages/OrderPage.tsx#L35)). В режиме `http` статус станет `paid` только после того, как бот прочитает `successful_payment` по long polling, поэтому этот reload может ещё показать `awaiting_payment`. Опроса нет.
 - `openInvoice` может вернуть `pending`; [`CheckoutPage.tsx:134`](webapp/src/pages/CheckoutPage.tsx#L134) и [`OrderPage.tsx:33`](webapp/src/pages/OrderPage.tsx#L33) считают отменой всё, что не `paid`.
-- Mini App не знает о сроке оплаты. Если окно оплаты закрыли, страница заказа пишет, что оплатить можно позже из истории заказов ([`OrderPage.tsx:108`](webapp/src/pages/OrderPage.tsx#L108)), и срока не показывает, а демо-API неоплаченные заказы не отменяет.
+- Mini App не знает о сроке оплаты. Если окно оплаты закрыли, страница заказа пишет, что оплатить можно позже из истории заказов ([`OrderPage.tsx:108`](webapp/src/pages/OrderPage.tsx#L108)), и срока не показывает.
 - Бот принимает заказы через `web_app_data` ([`handlers/webapp.py`](bot/tgshop/bot/handlers/webapp.py)), а `/start` присылает нужную для этого кнопку reply-клавиатуры ([`handlers/common.py:16`](bot/tgshop/bot/handlers/common.py#L16)), но Mini App нигде не вызывает `sendData`: в [`telegram/sdk.ts:69`](webapp/src/telegram/sdk.ts#L69) метод только объявлен.
 - Схема создаётся через `create_all` на старте ([`db/session.py:34`](bot/tgshop/db/session.py#L34)), миграций нет.
 - Покрытие [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) тестами — 62 %.
-- Демо-API сохраняет названия позиций и фасовку на русском ([`api/mock.ts:160`](webapp/src/api/mock.ts#L160)); в английском режиме список заказов ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) и фасовка на странице заказа ([`OrderPage.tsx:158`](webapp/src/pages/OrderPage.tsx#L158)) показывают их по-русски.
+- Демо-API сохраняет названия позиций и фасовку на русском ([`api/mock.ts:162`](webapp/src/api/mock.ts#L162)); в английском режиме список заказов ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) и фасовка на странице заказа ([`OrderPage.tsx:158`](webapp/src/pages/OrderPage.tsx#L158)) показывают их по-русски.
 - Регулярка телефона написана трижды: [`domain/schemas.py:15`](bot/tgshop/domain/schemas.py#L15), [`api/mock.ts:22`](webapp/src/api/mock.ts#L22), [`pages/CheckoutPage.tsx:15`](webapp/src/pages/CheckoutPage.tsx#L15).
 
 ---
