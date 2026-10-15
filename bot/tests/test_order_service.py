@@ -1,24 +1,24 @@
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncIterator, Coroutine
-from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tgshop.db.models import Order
-from tgshop.db.repository import OrderRepository
-from tgshop.db.session import create_engine, create_session_factory, init_models
-from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import OrderSource, OrderStatus, PaymentMethod
 from tgshop.domain.errors import InvalidTransition, NotFound, PaymentError, ValidationFailed
-from tgshop.domain.pricing import PricingRules
 from tgshop.domain.schemas import OrderCreate, OrderOut
 from tgshop.payments import make_payload
 from tgshop.services.orders import Customer, OrderService
 
-from .conftest import OTHER_USER_ID, USER_ID, FakeNotifier, FakePayments, order_payload
+from .conftest import (
+    OTHER_USER_ID,
+    USER_ID,
+    FakeNotifier,
+    FakePayments,
+    order_payload,
+    pay_concurrently,
+    run_after_next_read,
+)
 
 CUSTOMER = Customer(user_id=USER_ID, username="anna_demo", language="ru")
 
@@ -228,48 +228,6 @@ async def test_payment_for_cancelled_order_is_refunded_automatically(
     assert payments.refunds == [(USER_ID, "late-charge")]
 
 
-@pytest.fixture
-async def file_service(
-    tmp_path: Path,
-    catalog: Catalog,
-    rules: PricingRules,
-    notifier: FakeNotifier,
-    payments: FakePayments,
-) -> AsyncIterator[OrderService]:
-    """Like ``service``, but every session gets its own connection to a database file,
-    as in production. The in-memory fixture shares one connection between sessions."""
-    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'shop.db'}")
-    await init_models(engine)
-    yield OrderService(
-        session_factory=create_session_factory(engine),
-        catalog=catalog,
-        rules=rules,
-        notifier=notifier,
-        payments=payments,
-    )
-    await engine.dispose()
-
-
-async def pay_concurrently(
-    service: OrderService, order: OrderOut, *charge_ids: str
-) -> list[OrderOut | BaseException]:
-    # aiogram runs every update as its own task, so two successful_payment updates for one
-    # order can be handled at the same time.
-    return await asyncio.gather(
-        *(
-            service.mark_paid(
-                payload=make_payload(order.id),
-                currency="XTR",
-                total_amount=order.stars_amount or 0,
-                payer_id=USER_ID,
-                charge_id=charge_id,
-            )
-            for charge_id in charge_ids
-        ),
-        return_exceptions=True,
-    )
-
-
 async def test_concurrent_updates_for_one_charge_record_it_once(
     file_service: OrderService, notifier: FakeNotifier, payments: FakePayments
 ) -> None:
@@ -302,28 +260,6 @@ async def test_concurrent_payments_with_different_charges_refund_one(
     # The winning charge id is on the order, so /refund reaches the other one.
     await file_service.refund(order.id)
     assert sorted(charge for _, charge in payments.refunds) == ["charge-a", "charge-b"]
-
-
-def run_after_next_read(
-    monkeypatch: pytest.MonkeyPatch, other: Coroutine[Any, Any, object]
-) -> list[object]:
-    """Run ``other`` to the end right after the next order read, before that caller writes.
-
-    On SQLite that read takes no lock, so this is an order of events production can hit.
-    """
-    read = OrderRepository.get
-    results: list[object] = []
-
-    async def read_then_run(
-        self: OrderRepository, order_id: int, *, for_update: bool = False
-    ) -> Order | None:
-        found = await read(self, order_id, for_update=for_update)
-        monkeypatch.setattr(OrderRepository, "get", read)
-        results.extend(await asyncio.gather(other, return_exceptions=True))
-        return found
-
-    monkeypatch.setattr(OrderRepository, "get", read_then_run)
-    return results
 
 
 async def test_payment_between_cancel_read_and_write_keeps_the_order_paid(
