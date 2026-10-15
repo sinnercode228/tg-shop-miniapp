@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -17,11 +17,15 @@ from aiogram.types import Update
 
 from tgshop.bot.factory import create_dispatcher
 from tgshop.bot.keyboards import OrderAction, admin_order
-from tgshop.bot.texts import money
+from tgshop.bot.notifier import TelegramNotifier
+from tgshop.bot.texts import money, status_update
+from tgshop.db.session import SessionFactory
 from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import OrderSource, OrderStatus
-from tgshop.domain.schemas import OrderCreate
+from tgshop.domain.pricing import PricingRules
+from tgshop.domain.schemas import OrderCreate, OrderOut
 from tgshop.payments import make_payload
+from tgshop.services.expiry import UnpaidOrderExpiry
 from tgshop.services.orders import Customer, OrderService
 
 from .conftest import BOT_TOKEN, USER_ID, FakePayments, order_payload
@@ -185,6 +189,70 @@ async def test_successful_payment_marks_order_paid(
     order = await service.get(created.order.id)
     assert order is not None
     assert order.status is OrderStatus.PAID
+
+
+async def expire_unpaid_orders(service: OrderService, order: OrderOut) -> list[OrderOut]:
+    an_hour_later = order.created_at + timedelta(hours=1)
+    expiry = UnpaidOrderExpiry(service, ttl=timedelta(minutes=30), clock=lambda: an_hour_later)
+    return await expiry.run_once()
+
+
+async def test_payment_for_an_expired_order_is_refunded_and_explained(
+    dp: Dispatcher,
+    bot: Bot,
+    session: RecordingSession,
+    service: OrderService,
+    payments: FakePayments,
+) -> None:
+    created = await service.place_order(
+        Customer(user_id=USER_ID), OrderCreate.model_validate(order_payload(paymentMethod="stars"))
+    )
+    await expire_unpaid_orders(service, created.order)
+    payment = {
+        "currency": "XTR",
+        "total_amount": created.order.stars_amount,
+        "invoice_payload": make_payload(created.order.id),
+        "telegram_payment_charge_id": "tg-charge-late",
+        "provider_payment_charge_id": "",
+    }
+
+    await dp.feed_update(bot, message_update(USER_ID, successful_payment=payment))
+
+    assert payments.refunds == [(USER_ID, "tg-charge-late")]
+    [reply] = session.sent(SendMessage)
+    assert "Звёзды возвращены" in reply.text
+    order = await service.get(created.order.id)
+    assert order is not None
+    assert order.status is OrderStatus.CANCELLED
+
+
+async def test_expired_order_is_announced_to_the_customer_and_the_admins(
+    bot: Bot,
+    session: RecordingSession,
+    session_factory: SessionFactory,
+    catalog: Catalog,
+    rules: PricingRules,
+) -> None:
+    service = OrderService(
+        session_factory=session_factory,
+        catalog=catalog,
+        rules=rules,
+        notifier=TelegramNotifier(bot, catalog, [ADMIN_ID]),
+        payments=FakePayments(),
+    )
+    created = await service.place_order(
+        Customer(user_id=USER_ID), OrderCreate.model_validate(order_payload(paymentMethod="stars"))
+    )
+
+    [expired] = await expire_unpaid_orders(service, created.order)
+
+    to_customer, to_admin = session.sent(SendMessage)
+    assert to_customer.chat_id == USER_ID
+    assert to_customer.text == status_update(expired), "the same text as after a manual cancel"
+    assert to_admin.chat_id == ADMIN_ID
+    assert "Заказ не оплачен" in to_admin.text
+    assert f"Заказ №{expired.id}</b> · ✖️ Отменён" in to_admin.text
+    assert "+79000000000" in to_admin.text, "admins see who abandoned the order"
 
 
 async def test_admin_commands_are_admin_only(

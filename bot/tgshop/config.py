@@ -38,6 +38,8 @@ class Settings(BaseSettings):
 
     init_data_ttl: int = Field(default=24 * 60 * 60, ge=60)
     stars_enabled: bool = True
+    # Minutes a Stars order may wait for payment before the bot cancels it; 0 turns it off.
+    order_payment_ttl_minutes: int = Field(default=30, ge=0)
     shared_dir: Path = _DEFAULT_SHARED_DIR
     log_level: str = "INFO"
 

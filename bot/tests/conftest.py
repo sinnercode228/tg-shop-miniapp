@@ -34,12 +34,16 @@ class FakeNotifier:
     def __init__(self) -> None:
         self.placed: list[OrderOut] = []
         self.changes: list[tuple[OrderOut, OrderStatus]] = []
+        self.expired: list[OrderOut] = []
 
     async def order_placed(self, order: OrderOut) -> None:
         self.placed.append(order)
 
     async def status_changed(self, order: OrderOut, previous: OrderStatus) -> None:
         self.changes.append((order, previous))
+
+    async def order_expired(self, order: OrderOut) -> None:
+        self.expired.append(order)
 
 
 class FakePayments:
