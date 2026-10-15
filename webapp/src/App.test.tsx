@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
+import { api } from './api';
 import { routes } from './App';
 import { useLang } from './i18n';
 import { useCart } from './store/cart';
@@ -50,5 +51,26 @@ describe('shop flow (browser fallback, mock API)', () => {
     expect(await screen.findByText('Заказ оформлен', {}, { timeout: 3000 })).toBeInTheDocument();
     expect(router.state.location.pathname).toMatch(/^\/orders\/\d+$/);
     expect(useCart.getState().lines).toEqual([]);
+  });
+
+  it('shows a Stars order cancelled for lack of payment as cancelled', async () => {
+    const { order } = await api.createOrder({
+      items: [{ productId: 'gaiwan', variantId: 'std', grind: null, quantity: 1 }],
+      deliveryMethod: 'pickup',
+      pickupPointId: 'kofeynaya-12',
+      deliverySlot: 'asap',
+      paymentMethod: 'stars',
+      customer: { name: 'Анна', phone: '+79001234567' },
+    });
+    const cancelledAt = { status: 'cancelled' as const, createdAt: order.createdAt };
+    const getOrder = vi
+      .spyOn(api, 'getOrder')
+      .mockResolvedValue({ ...order, status: 'cancelled', events: [...order.events, cancelledAt] });
+    try {
+      renderAt(`/orders/${order.id}`);
+      expect(await screen.findByRole('heading', { name: 'Заказ отменён' })).toBeInTheDocument();
+    } finally {
+      getOrder.mockRestore();
+    }
   });
 });

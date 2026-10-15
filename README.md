@@ -119,10 +119,10 @@ Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Nod
 
 ```bash
 (cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 129 tests, 94 % coverage
-(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 41 vitest tests
+(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 42 vitest tests
 ```
 
-[`tests/test_bot.py`](bot/tests/test_bot.py) runs the bot handlers without aiogram mocks: real `Update` objects go through a real `Dispatcher` with routing, filters and DI, and a `RecordingSession` records each Bot API call in place of the network. vitest covers the cart, search, money formatting, the demo API, the 9 pricing vectors and three UI scenarios in jsdom.
+[`tests/test_bot.py`](bot/tests/test_bot.py) runs the bot handlers without aiogram mocks: real `Update` objects go through a real `Dispatcher` with routing, filters and DI, and a `RecordingSession` records each Bot API call in place of the network. vitest covers the cart, search, money formatting, the demo API, the 9 pricing vectors and four UI scenarios in jsdom.
 
 ## Known limitations
 
@@ -131,11 +131,11 @@ Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Nod
 - The `postgres` extra is declared in [`pyproject.toml`](bot/pyproject.toml), but no test or CI job runs against Postgres.
 - After `openInvoice` the order page reloads once ([`OrderPage.tsx:35`](webapp/src/pages/OrderPage.tsx#L35)). In `http` mode the order turns `paid` only after the bot reads `successful_payment` over long polling, so that reload can still show `awaiting_payment`. There is no polling.
 - `openInvoice` can report `pending`; [`CheckoutPage.tsx:134`](webapp/src/pages/CheckoutPage.tsx#L134) and [`OrderPage.tsx:33`](webapp/src/pages/OrderPage.tsx#L33) treat anything but `paid` as cancelled.
-- The Mini App does not know about the payment time limit. After the payment sheet is closed, the order page says the order can be paid later from the order history ([`OrderPage.tsx:108`](webapp/src/pages/OrderPage.tsx#L108)) and shows no deadline.
+- The Mini App does not know about the payment time limit. After the payment sheet is closed, the order page says the order can be paid later from the order history ([`OrderPage.tsx:111`](webapp/src/pages/OrderPage.tsx#L111)) and shows no deadline.
 - The bot accepts orders as `web_app_data` ([`handlers/webapp.py`](bot/tgshop/bot/handlers/webapp.py)), and `/start` sends the reply-keyboard button that launch mode needs ([`handlers/common.py:16`](bot/tgshop/bot/handlers/common.py#L16)), but the Mini App never calls `sendData`: [`telegram/sdk.ts:69`](webapp/src/telegram/sdk.ts#L69) only declares it.
 - The schema comes from `create_all` at startup ([`db/session.py:34`](bot/tgshop/db/session.py#L34)); there are no migrations.
 - [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) is at 62 % test coverage.
-- The demo API saves item titles and variant labels in Russian ([`api/mock.ts:162`](webapp/src/api/mock.ts#L162)); in English mode the order list ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) and the variant label on the order page ([`OrderPage.tsx:158`](webapp/src/pages/OrderPage.tsx#L158)) still show them in Russian.
+- The demo API saves item titles and variant labels in Russian ([`api/mock.ts:162`](webapp/src/api/mock.ts#L162)); in English mode the order list ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) and the variant label on the order page ([`OrderPage.tsx:161`](webapp/src/pages/OrderPage.tsx#L161)) still show them in Russian.
 - The phone regex is written three times: [`domain/schemas.py:15`](bot/tgshop/domain/schemas.py#L15), [`api/mock.ts:22`](webapp/src/api/mock.ts#L22), [`pages/CheckoutPage.tsx:15`](webapp/src/pages/CheckoutPage.tsx#L15).
 
 ---

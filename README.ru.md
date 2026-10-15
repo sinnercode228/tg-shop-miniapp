@@ -119,10 +119,10 @@ Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN`, затем `
 
 ```bash
 (cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 129 тестов, покрытие 94 %
-(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 41 тест vitest
+(cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 42 теста vitest
 ```
 
-[`tests/test_bot.py`](bot/tests/test_bot.py) проверяет хендлеры бота без моков aiogram: настоящие `Update` проходят через настоящий `Dispatcher` с роутингом, фильтрами и DI, а вместо сети стоит `RecordingSession`, которая записывает каждый вызов Bot API. vitest покрывает корзину, поиск, форматирование денег, демо-API, те же 9 векторов цен и три UI-сценария в jsdom.
+[`tests/test_bot.py`](bot/tests/test_bot.py) проверяет хендлеры бота без моков aiogram: настоящие `Update` проходят через настоящий `Dispatcher` с роутингом, фильтрами и DI, а вместо сети стоит `RecordingSession`, которая записывает каждый вызов Bot API. vitest покрывает корзину, поиск, форматирование денег, демо-API, те же 9 векторов цен и четыре UI-сценария в jsdom.
 
 ## Известные ограничения
 
@@ -131,11 +131,11 @@ Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN`, затем `
 - Extra `postgres` объявлен в [`pyproject.toml`](bot/pyproject.toml), но ни тесты, ни CI против Postgres не запускаются.
 - После `openInvoice` страница заказа один раз делает reload ([`OrderPage.tsx:35`](webapp/src/pages/OrderPage.tsx#L35)). В режиме `http` статус станет `paid` только после того, как бот прочитает `successful_payment` по long polling, поэтому этот reload может ещё показать `awaiting_payment`. Опроса нет.
 - `openInvoice` может вернуть `pending`; [`CheckoutPage.tsx:134`](webapp/src/pages/CheckoutPage.tsx#L134) и [`OrderPage.tsx:33`](webapp/src/pages/OrderPage.tsx#L33) считают отменой всё, что не `paid`.
-- Mini App не знает о сроке оплаты. Если окно оплаты закрыли, страница заказа пишет, что оплатить можно позже из истории заказов ([`OrderPage.tsx:108`](webapp/src/pages/OrderPage.tsx#L108)), и срока не показывает.
+- Mini App не знает о сроке оплаты. Если окно оплаты закрыли, страница заказа пишет, что оплатить можно позже из истории заказов ([`OrderPage.tsx:111`](webapp/src/pages/OrderPage.tsx#L111)), и срока не показывает.
 - Бот принимает заказы через `web_app_data` ([`handlers/webapp.py`](bot/tgshop/bot/handlers/webapp.py)), а `/start` присылает нужную для этого кнопку reply-клавиатуры ([`handlers/common.py:16`](bot/tgshop/bot/handlers/common.py#L16)), но Mini App нигде не вызывает `sendData`: в [`telegram/sdk.ts:69`](webapp/src/telegram/sdk.ts#L69) метод только объявлен.
 - Схема создаётся через `create_all` на старте ([`db/session.py:34`](bot/tgshop/db/session.py#L34)), миграций нет.
 - Покрытие [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) тестами — 62 %.
-- Демо-API сохраняет названия позиций и фасовку на русском ([`api/mock.ts:162`](webapp/src/api/mock.ts#L162)); в английском режиме список заказов ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) и фасовка на странице заказа ([`OrderPage.tsx:158`](webapp/src/pages/OrderPage.tsx#L158)) показывают их по-русски.
+- Демо-API сохраняет названия позиций и фасовку на русском ([`api/mock.ts:162`](webapp/src/api/mock.ts#L162)); в английском режиме список заказов ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) и фасовка на странице заказа ([`OrderPage.tsx:161`](webapp/src/pages/OrderPage.tsx#L161)) показывают их по-русски.
 - Регулярка телефона написана трижды: [`domain/schemas.py:15`](bot/tgshop/domain/schemas.py#L15), [`api/mock.ts:22`](webapp/src/api/mock.ts#L22), [`pages/CheckoutPage.tsx:15`](webapp/src/pages/CheckoutPage.tsx#L15).
 
 ---
