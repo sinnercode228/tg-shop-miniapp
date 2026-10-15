@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 from tgshop.db.models import Order, OrderItem
 from tgshop.db.repository import OrderRepository
@@ -327,4 +328,33 @@ class OrderService:
             await session.flush()
             dto = _to_dto(order)
         await self._notifier.status_changed(dto, previous)
+        return dto
+
+    async def expire_unpaid(self, *, placed_before: datetime) -> list[OrderOut]:
+        """Cancel the orders still awaiting payment that were placed before ``placed_before``."""
+        async with self._sessions() as session:
+            order_ids = await OrderRepository(session).unpaid_placed_before(placed_before)
+        expired: list[OrderOut] = []
+        for order_id in order_ids:
+            order = await self._expire(order_id)
+            if order is not None:
+                expired.append(order)
+        return expired
+
+    async def _expire(self, order_id: int) -> OrderOut | None:
+        async with self._sessions() as session, session.begin():
+            orders = OrderRepository(session)
+            order = await orders.get(order_id, for_update=True)
+            if order is None or not await orders.move_status(
+                order.id, OrderStatus.AWAITING_PAYMENT, OrderStatus.CANCELLED
+            ):
+                # Paid or cancelled since the listing. claim_payment and change_status write
+                # with the same conditional UPDATE, so only one of them moves the order.
+                return None
+            order.set_status(OrderStatus.CANCELLED, "not paid in time")
+            await session.flush()
+            dto = _to_dto(order)
+        log.info("order %s cancelled: not paid in time", dto.id)
+        await self._notifier.status_changed(dto, OrderStatus.AWAITING_PAYMENT)
+        await self._notifier.order_expired(dto)
         return dto

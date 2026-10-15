@@ -26,7 +26,13 @@ class TelegramNotifier:
         self._admins = tuple(admin_ids)
 
     async def order_placed(self, order: OrderOut) -> None:
-        text = "🛎 <b>Новый заказ</b>\n\n" + order_summary(order, self._catalog, for_admin=True)
+        await self._tell_admins(order, "🛎 <b>Новый заказ</b>")
+
+    async def order_expired(self, order: OrderOut) -> None:
+        await self._tell_admins(order, "⌛ <b>Заказ не оплачен вовремя</b>")
+
+    async def _tell_admins(self, order: OrderOut, title: str) -> None:
+        text = f"{title}\n\n" + order_summary(order, self._catalog, for_admin=True)
         for admin_id in self._admins:
             try:
                 await self._bot.send_message(admin_id, text, reply_markup=admin_order(order))

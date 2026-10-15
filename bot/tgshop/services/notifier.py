@@ -17,10 +17,17 @@ class Notifier(Protocol):
         """Tell the customer their order moved to another status."""
         ...
 
+    async def order_expired(self, order: OrderOut) -> None:
+        """Tell the admins a Stars order was cancelled because it was not paid in time."""
+        ...
+
 
 class NullNotifier:
     async def order_placed(self, order: OrderOut) -> None:
         return None
 
     async def status_changed(self, order: OrderOut, previous: OrderStatus) -> None:
+        return None
+
+    async def order_expired(self, order: OrderOut) -> None:
         return None

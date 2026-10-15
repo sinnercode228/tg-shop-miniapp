@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from pathlib import Path
 from typing import Any
 
@@ -12,12 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tgshop.api.app import create_app
 from tgshop.api.context import ApiContext
+from tgshop.db.models import Order
+from tgshop.db.repository import OrderRepository
 from tgshop.db.session import SessionFactory, create_engine, create_session_factory, init_models
 from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import OrderStatus
 from tgshop.domain.pricing import PricingRules
 from tgshop.domain.schemas import OrderOut
-from tgshop.payments import Invoice
+from tgshop.payments import Invoice, make_payload
 from tgshop.security.init_data import sign_init_data
 from tgshop.services.orders import OrderService
 
@@ -31,12 +34,16 @@ class FakeNotifier:
     def __init__(self) -> None:
         self.placed: list[OrderOut] = []
         self.changes: list[tuple[OrderOut, OrderStatus]] = []
+        self.expired: list[OrderOut] = []
 
     async def order_placed(self, order: OrderOut) -> None:
         self.placed.append(order)
 
     async def status_changed(self, order: OrderOut, previous: OrderStatus) -> None:
         self.changes.append((order, previous))
+
+    async def order_expired(self, order: OrderOut) -> None:
+        self.expired.append(order)
 
 
 class FakePayments:
@@ -161,3 +168,67 @@ async def client(service: OrderService, catalog: Catalog) -> AsyncIterator[httpx
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
         yield http
+
+
+@pytest.fixture
+async def file_service(
+    tmp_path: Path,
+    catalog: Catalog,
+    rules: PricingRules,
+    notifier: FakeNotifier,
+    payments: FakePayments,
+) -> AsyncIterator[OrderService]:
+    """Like ``service``, but every session gets its own connection to a database file,
+    as in production. The in-memory fixture shares one connection between sessions."""
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'shop.db'}")
+    await init_models(engine)
+    yield OrderService(
+        session_factory=create_session_factory(engine),
+        catalog=catalog,
+        rules=rules,
+        notifier=notifier,
+        payments=payments,
+    )
+    await engine.dispose()
+
+
+async def pay_concurrently(
+    service: OrderService, order: OrderOut, *charge_ids: str
+) -> list[OrderOut | BaseException]:
+    # aiogram runs every update as its own task, so two successful_payment updates for one
+    # order can be handled at the same time.
+    return await asyncio.gather(
+        *(
+            service.mark_paid(
+                payload=make_payload(order.id),
+                currency="XTR",
+                total_amount=order.stars_amount or 0,
+                payer_id=USER_ID,
+                charge_id=charge_id,
+            )
+            for charge_id in charge_ids
+        ),
+        return_exceptions=True,
+    )
+
+
+def run_after_next_read(
+    monkeypatch: pytest.MonkeyPatch, other: Coroutine[Any, Any, object]
+) -> list[object]:
+    """Run ``other`` to the end right after the next order read, before that caller writes.
+
+    On SQLite that read takes no lock, so this is an order of events production can hit.
+    """
+    read = OrderRepository.get
+    results: list[object] = []
+
+    async def read_then_run(
+        self: OrderRepository, order_id: int, *, for_update: bool = False
+    ) -> Order | None:
+        found = await read(self, order_id, for_update=for_update)
+        monkeypatch.setattr(OrderRepository, "get", read)
+        results.extend(await asyncio.gather(other, return_exceptions=True))
+        return found
+
+    monkeypatch.setattr(OrderRepository, "get", read_then_run)
+    return results

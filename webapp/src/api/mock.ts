@@ -49,6 +49,8 @@ const browserStore: KeyValueStore = {
 };
 
 const MIN = 60_000;
+/** The bot's default ORDER_PAYMENT_TTL_MINUTES: an unpaid Stars order is cancelled after it. */
+const PAYMENT_TTL = 30 * MIN;
 
 /** Simulated progress after an order is accepted, so the order history looks alive. */
 function plannedProgress(order: StoredOrder, from: number): [OrderStatus, number][] {
@@ -187,7 +189,9 @@ export class MockShopApi implements ShopApi {
       items,
       timeline: [[paysWithStars ? 'awaiting_payment' : 'new', now]],
     };
-    if (!paysWithStars) stored.timeline.push(...plannedProgress(stored, now));
+    // markPaid drops the planned cancellation together with the other future entries.
+    if (paysWithStars) stored.timeline.push(['cancelled', now + PAYMENT_TTL]);
+    else stored.timeline.push(...plannedProgress(stored, now));
     this.save([stored, ...orders]);
     return this.delay({ order: this.toOrder(stored), invoiceUrl: null });
   }

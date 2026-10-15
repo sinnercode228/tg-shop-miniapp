@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, select, update
@@ -52,6 +53,15 @@ class OrderRepository:
             OrderStatus.PAID,
             telegram_payment_charge_id=charge_id,
         )
+
+    async def unpaid_placed_before(self, moment: datetime) -> Sequence[int]:
+        """Ids of the orders still awaiting payment that were placed before ``moment``."""
+        stmt = (
+            select(Order.id)
+            .where(Order.status == OrderStatus.AWAITING_PAYMENT, Order.created_at < moment)
+            .order_by(Order.id)
+        )
+        return (await self._session.execute(stmt)).scalars().all()
 
     async def list_for_user(self, user_id: int, *, limit: int = 50) -> Sequence[Order]:
         stmt = select(Order).where(Order.user_id == user_id).order_by(Order.id.desc()).limit(limit)

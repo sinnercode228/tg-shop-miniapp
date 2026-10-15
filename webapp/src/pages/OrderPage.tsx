@@ -67,11 +67,14 @@ export function OrderPage() {
   if (!order) return <Skeleton className="h-64" />;
 
   const awaiting = order.status === 'awaiting_payment';
+  const cancelled = order.status === 'cancelled';
   const headline = awaiting
     ? t('awaitingPayment')
-    : order.events.some((e) => e.status === 'paid')
-      ? t('orderPaid')
-      : t('orderPlaced');
+    : cancelled
+      ? t('orderCancelled')
+      : order.events.some((e) => e.status === 'paid')
+        ? t('orderPaid')
+        : t('orderPlaced');
   const time = new Intl.DateTimeFormat(lang === 'ru' ? 'ru-RU' : 'en-GB', {
     hour: '2-digit',
     minute: '2-digit',
@@ -94,10 +97,10 @@ export function OrderPage() {
           transition={{ type: 'spring', stiffness: 300, damping: 14, delay: 0.1 }}
           className={clsx(
             'grid size-18 place-items-center rounded-full text-4xl',
-            awaiting ? 'bg-amber-400/20' : 'bg-emerald-500/15',
+            awaiting ? 'bg-amber-400/20' : cancelled ? 'bg-zinc-500/15' : 'bg-emerald-500/15',
           )}
         >
-          {awaiting ? '⭐' : '✓'}
+          {awaiting ? '⭐' : cancelled ? '✕' : '✓'}
         </motion.div>
         <h1 className="mt-4 text-2xl font-bold">{headline}</h1>
         <p className="mt-1 text-hint">
