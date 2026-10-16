@@ -17,6 +17,7 @@ from tgshop.domain.enums import (
     OrderSource,
     OrderStatus,
     PaymentMethod,
+    RefundStatus,
 )
 
 
@@ -128,3 +129,26 @@ class OrderEvent(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     order: Mapped[Order] = relationship(back_populates="events")
+
+
+class Refund(Base):
+    """A Stars refund that has to happen. It is written in the same transaction as the order
+    change that calls for it, and ``RefundOutbox`` calls ``refundStarPayment`` afterwards."""
+
+    __tablename__ = "refunds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), index=True)
+    telegram_payment_charge_id: Mapped[str] = mapped_column(String(128), unique=True)
+    user_id: Mapped[int] = mapped_column(BigInteger)
+    amount: Mapped[int] = mapped_column(Integer)
+    # Why the order could not take the payment; None when an admin refunds a paid order.
+    reason: Mapped[str | None] = mapped_column(String(200))
+    status: Mapped[RefundStatus] = mapped_column(
+        _enum(RefundStatus), default=RefundStatus.PENDING, index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(default=utcnow)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

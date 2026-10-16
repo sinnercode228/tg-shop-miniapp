@@ -17,6 +17,7 @@ from tgshop.domain.schemas import OrderCreate, OrderOut
 from tgshop.payments import make_payload
 from tgshop.services.expiry import UnpaidOrderExpiry
 from tgshop.services.orders import Customer, OrderService
+from tgshop.services.refunds import RefundOutbox
 
 from .conftest import (
     BOT_TOKEN,
@@ -98,7 +99,7 @@ async def test_unpaid_order_is_cancelled_after_the_ttl(
 
 
 async def test_payment_for_an_expired_order_is_refunded(
-    service: OrderService, notifier: FakeNotifier, payments: FakePayments
+    service: OrderService, outbox: RefundOutbox, notifier: FakeNotifier, payments: FakePayments
 ) -> None:
     order = await place_stars_order(service)
     await expiry_at(service, order.created_at + 2 * TTL).run_once()
@@ -114,8 +115,12 @@ async def test_payment_for_an_expired_order_is_refunded(
     )
     with pytest.raises(PaymentError):
         await pay(service, order, "late-charge")
+    assert payments.refunds == [], "the refund is recorded, the outbox sends it"
+    [refund] = await outbox.run_once()
 
+    assert (refund.order_id, refund.charge_id) == (order.id, "late-charge")
     assert payments.refunds == [(USER_ID, "late-charge")]
+    assert notifier.returned == [(USER_ID, "Заказ уже оплачен или отменён")]
     assert await stored_statuses(service, order) == [
         OrderStatus.AWAITING_PAYMENT,
         OrderStatus.CANCELLED,
@@ -147,6 +152,7 @@ async def test_payment_between_expiry_read_and_write_keeps_the_order_paid(
 
 async def test_expiry_between_payment_read_and_write_refunds_the_payment(
     file_service: OrderService,
+    file_outbox: RefundOutbox,
     notifier: FakeNotifier,
     payments: FakePayments,
     monkeypatch: pytest.MonkeyPatch,
@@ -161,6 +167,7 @@ async def test_expiry_between_payment_read_and_write_refunds_the_payment(
         OrderStatus.AWAITING_PAYMENT,
         OrderStatus.CANCELLED,
     ]
+    await file_outbox.run_once()
     assert payments.refunds == [(USER_ID, "charge-1")]
     assert [o.id for o in notifier.expired] == [order.id]
     assert notifier.placed == []

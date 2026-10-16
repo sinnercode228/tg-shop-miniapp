@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Coroutine
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tgshop.api.app import create_app
 from tgshop.api.context import ApiContext
-from tgshop.db.models import Order
+from tgshop.db.models import Order, utcnow
 from tgshop.db.repository import OrderRepository
 from tgshop.db.session import SessionFactory, create_engine, create_session_factory, init_models
 from tgshop.domain.catalog import Catalog
@@ -23,6 +24,7 @@ from tgshop.domain.schemas import OrderOut
 from tgshop.payments import Invoice, make_payload
 from tgshop.security.init_data import sign_init_data
 from tgshop.services.orders import OrderService
+from tgshop.services.refunds import RefundOut, RefundOutbox
 
 BOT_TOKEN = "7000000001:AAtest-token-used-only-in-unit-tests"
 SHARED = Path(__file__).resolve().parents[2] / "shared"
@@ -35,6 +37,9 @@ class FakeNotifier:
         self.placed: list[OrderOut] = []
         self.changes: list[tuple[OrderOut, OrderStatus]] = []
         self.expired: list[OrderOut] = []
+        self.refunded: list[OrderOut] = []
+        self.returned: list[tuple[int, str]] = []
+        self.failed_refunds: list[RefundOut] = []
 
     async def order_placed(self, order: OrderOut) -> None:
         self.placed.append(order)
@@ -45,12 +50,23 @@ class FakeNotifier:
     async def order_expired(self, order: OrderOut) -> None:
         self.expired.append(order)
 
+    async def order_refunded(self, order: OrderOut) -> None:
+        self.refunded.append(order)
+
+    async def payment_returned(self, user_id: int, reason: str) -> None:
+        self.returned.append((user_id, reason))
+
+    async def refund_failed(self, refund: RefundOut) -> None:
+        self.failed_refunds.append(refund)
+
 
 class FakePayments:
     def __init__(self) -> None:
         self.links: list[Invoice] = []
         self.sent: list[tuple[int, Invoice]] = []
         self.refunds: list[tuple[int, str]] = []
+        # Raised by the next refund calls, one per call, as by a Bot API that refuses them.
+        self.refund_errors: list[Exception] = []
 
     async def create_invoice_link(self, invoice: Invoice) -> str:
         self.links.append(invoice)
@@ -60,7 +76,22 @@ class FakePayments:
         self.sent.append((chat_id, invoice))
 
     async def refund(self, user_id: int, charge_id: str) -> None:
+        if self.refund_errors:
+            raise self.refund_errors.pop(0)
         self.refunds.append((user_id, charge_id))
+
+
+class Clock:
+    """A clock that moves only when a test moves it."""
+
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, **delta: float) -> None:
+        self.now += timedelta(**delta)
 
 
 def make_init_data(
@@ -156,6 +187,35 @@ def service(
 
 
 @pytest.fixture
+def clock() -> Clock:
+    # A minute ahead, so the refunds a test records are already due at its first sweep.
+    return Clock(utcnow() + timedelta(minutes=1))
+
+
+def make_outbox(
+    session_factory: SessionFactory,
+    payments: FakePayments,
+    notifier: FakeNotifier,
+    clock: Clock,
+) -> RefundOutbox:
+    return RefundOutbox(
+        session_factory,
+        payments,
+        notifier,
+        max_attempts=3,
+        retry_delay=timedelta(seconds=30),
+        clock=clock,
+    )
+
+
+@pytest.fixture
+def outbox(
+    session_factory: SessionFactory, payments: FakePayments, notifier: FakeNotifier, clock: Clock
+) -> RefundOutbox:
+    return make_outbox(session_factory, payments, notifier, clock)
+
+
+@pytest.fixture
 async def client(service: OrderService, catalog: Catalog) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
         ApiContext(
@@ -171,25 +231,38 @@ async def client(service: OrderService, catalog: Catalog) -> AsyncIterator[httpx
 
 
 @pytest.fixture
-async def file_service(
-    tmp_path: Path,
+async def file_sessions(tmp_path: Path) -> AsyncIterator[SessionFactory]:
+    """Every session gets its own connection to a database file, as in production.
+    The in-memory ``session_factory`` shares one connection between sessions."""
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'shop.db'}")
+    await init_models(engine)
+    yield create_session_factory(engine)
+    await engine.dispose()
+
+
+@pytest.fixture
+def file_service(
+    file_sessions: SessionFactory,
     catalog: Catalog,
     rules: PricingRules,
     notifier: FakeNotifier,
     payments: FakePayments,
-) -> AsyncIterator[OrderService]:
-    """Like ``service``, but every session gets its own connection to a database file,
-    as in production. The in-memory fixture shares one connection between sessions."""
-    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'shop.db'}")
-    await init_models(engine)
-    yield OrderService(
-        session_factory=create_session_factory(engine),
+) -> OrderService:
+    """Like ``service``, but on ``file_sessions``."""
+    return OrderService(
+        session_factory=file_sessions,
         catalog=catalog,
         rules=rules,
         notifier=notifier,
         payments=payments,
     )
-    await engine.dispose()
+
+
+@pytest.fixture
+def file_outbox(
+    file_sessions: SessionFactory, payments: FakePayments, notifier: FakeNotifier, clock: Clock
+) -> RefundOutbox:
+    return make_outbox(file_sessions, payments, notifier, clock)
 
 
 async def pay_concurrently(

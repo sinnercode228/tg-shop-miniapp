@@ -20,6 +20,7 @@ from .domain.pricing import PricingRules
 from .payments import TelegramStarsGateway
 from .services.expiry import UnpaidOrderExpiry
 from .services.orders import OrderService
+from .services.refunds import RefundOutbox
 
 
 @dataclass(slots=True)
@@ -32,6 +33,7 @@ class Container:
     bot: Bot
     order_service: OrderService
     unpaid_order_expiry: UnpaidOrderExpiry | None
+    refund_outbox: RefundOutbox
 
     def dispatcher(self) -> Dispatcher:
         dp = create_dispatcher(
@@ -44,6 +46,8 @@ class Container:
             # Tied to polling, so a separate `--mode api` process never sweeps as well.
             dp.startup.register(self.unpaid_order_expiry.start)
             dp.shutdown.register(self.unpaid_order_expiry.stop)
+        dp.startup.register(self.refund_outbox.start)
+        dp.shutdown.register(self.refund_outbox.stop)
         return dp
 
     def api(self) -> FastAPI:
@@ -68,12 +72,23 @@ def build_container(settings: Settings) -> Container:
     catalog = Catalog.from_file(settings.catalog_path)
     rules = PricingRules.from_file(settings.pricing_path)
     bot = create_bot(settings.bot_token.get_secret_value())
+    notifier = TelegramNotifier(bot, catalog, settings.admin_ids)
+    stars = TelegramStarsGateway(bot)
+    # Refunds go out even with STARS_ENABLED=false: that setting stops new Stars payments only.
+    refund_outbox = RefundOutbox(
+        session_factory,
+        stars,
+        notifier,
+        max_attempts=settings.refund_max_attempts,
+        retry_delay=timedelta(seconds=settings.refund_retry_seconds),
+    )
     service = OrderService(
         session_factory=session_factory,
         catalog=catalog,
         rules=rules,
-        notifier=TelegramNotifier(bot, catalog, settings.admin_ids),
-        payments=TelegramStarsGateway(bot) if settings.stars_enabled else None,
+        notifier=notifier,
+        payments=stars if settings.stars_enabled else None,
+        refund_recorded=refund_outbox.wake,
     )
     ttl = settings.order_payment_ttl_minutes
     return Container(
@@ -85,4 +100,5 @@ def build_container(settings: Settings) -> Container:
         bot=bot,
         order_service=service,
         unpaid_order_expiry=UnpaidOrderExpiry(service, ttl=timedelta(minutes=ttl)) if ttl else None,
+        refund_outbox=refund_outbox,
     )

@@ -94,7 +94,10 @@ async def refund(message: Message, command: CommandObject, order_service: OrderS
     except DomainError as exc:
         await message.answer(f"Возврат не выполнен: {exc.message}")
         return
-    await message.answer(f"Звёзды по заказу №{order.id} возвращены покупателю.")
+    await message.answer(
+        f"Возврат по заказу №{order.id} оформлен: бот вернёт звёзды покупателю. "
+        "Если Telegram откажет, придёт отдельное сообщение."
+    )
 
 
 async def on_order_action(

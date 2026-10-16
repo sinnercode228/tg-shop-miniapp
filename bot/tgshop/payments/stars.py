@@ -14,6 +14,7 @@ Stars invoices need no provider token.
 from __future__ import annotations
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import LabeledPrice
 
 from tgshop.domain.enums import OrderStatus
@@ -101,4 +102,11 @@ class TelegramStarsGateway:
         )
 
     async def refund(self, user_id: int, charge_id: str) -> None:
-        await self._bot.refund_star_payment(user_id=user_id, telegram_payment_charge_id=charge_id)
+        try:
+            await self._bot.refund_star_payment(
+                user_id=user_id, telegram_payment_charge_id=charge_id
+            )
+        except TelegramBadRequest as exc:
+            # An earlier call went through, but its answer was lost: the Stars are back.
+            if "CHARGE_ALREADY_REFUNDED" not in exc.message:
+                raise

@@ -9,6 +9,7 @@ from tgshop.domain.errors import InvalidTransition, NotFound, PaymentError, Vali
 from tgshop.domain.schemas import OrderCreate, OrderOut
 from tgshop.payments import make_payload
 from tgshop.services.orders import Customer, OrderService
+from tgshop.services.refunds import RefundOutbox
 
 from .conftest import (
     OTHER_USER_ID,
@@ -150,7 +151,7 @@ async def test_stars_disabled(
 
 
 async def test_full_stars_payment_flow(
-    service: OrderService, notifier: FakeNotifier, payments: FakePayments
+    service: OrderService, outbox: RefundOutbox, notifier: FakeNotifier, payments: FakePayments
 ) -> None:
     order = (await service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
     payload = make_payload(order.id)
@@ -208,11 +209,14 @@ async def test_full_stars_payment_flow(
     # Refund
     refunded = await service.change_status(order.id, OrderStatus.REFUNDED)
     assert refunded.status is OrderStatus.REFUNDED
+    assert payments.refunds == [], "the outbox calls refundStarPayment after the commit"
+    await outbox.run_once()
     assert payments.refunds == [(USER_ID, "charge-1")]
+    assert [o.status for o in notifier.refunded] == [OrderStatus.REFUNDED]
 
 
 async def test_payment_for_cancelled_order_is_refunded_automatically(
-    service: OrderService, payments: FakePayments
+    service: OrderService, outbox: RefundOutbox, notifier: FakeNotifier, payments: FakePayments
 ) -> None:
     order = (await service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
     await service.change_status(order.id, OrderStatus.CANCELLED)
@@ -225,7 +229,9 @@ async def test_payment_for_cancelled_order_is_refunded_automatically(
             payer_id=USER_ID,
             charge_id="late-charge",
         )
+    await outbox.run_once()
     assert payments.refunds == [(USER_ID, "late-charge")]
+    assert notifier.returned == [(USER_ID, "Заказ уже оплачен или отменён")]
 
 
 async def test_concurrent_updates_for_one_charge_record_it_once(
@@ -243,7 +249,10 @@ async def test_concurrent_updates_for_one_charge_record_it_once(
 
 
 async def test_concurrent_payments_with_different_charges_refund_one(
-    file_service: OrderService, notifier: FakeNotifier, payments: FakePayments
+    file_service: OrderService,
+    file_outbox: RefundOutbox,
+    notifier: FakeNotifier,
+    payments: FakePayments,
 ) -> None:
     order = (await file_service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
 
@@ -256,9 +265,11 @@ async def test_concurrent_payments_with_different_charges_refund_one(
     stored = await file_service.get_for_user(USER_ID, order.id)
     assert [e.status for e in stored.events] == [OrderStatus.AWAITING_PAYMENT, OrderStatus.PAID]
     assert len(notifier.placed) == 1
-    assert len(payments.refunds) == 1, "the losing charge goes back at once"
+    await file_outbox.run_once()
+    assert len(payments.refunds) == 1, "the losing charge goes back"
     # The winning charge id is on the order, so /refund reaches the other one.
     await file_service.refund(order.id)
+    await file_outbox.run_once()
     assert sorted(charge for _, charge in payments.refunds) == ["charge-a", "charge-b"]
 
 
@@ -278,7 +289,10 @@ async def test_payment_between_cancel_read_and_write_keeps_the_order_paid(
 
 
 async def test_cancel_between_payment_read_and_write_refunds_the_payment(
-    file_service: OrderService, payments: FakePayments, monkeypatch: pytest.MonkeyPatch
+    file_service: OrderService,
+    file_outbox: RefundOutbox,
+    payments: FakePayments,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     order = (await file_service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
     run_after_next_read(monkeypatch, file_service.change_status(order.id, OrderStatus.CANCELLED))
@@ -297,6 +311,7 @@ async def test_cancel_between_payment_read_and_write_refunds_the_payment(
         OrderStatus.AWAITING_PAYMENT,
         OrderStatus.CANCELLED,
     ]
+    await file_outbox.run_once()
     assert payments.refunds == [(USER_ID, "charge-1")]
 
 
