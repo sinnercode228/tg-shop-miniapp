@@ -7,6 +7,7 @@ from html import escape
 from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import DeliveryMethod, DeliverySlot, OrderStatus, PaymentMethod
 from tgshop.domain.schemas import OrderOut
+from tgshop.services.refunds import RefundOut
 
 STATUS_LABELS: dict[OrderStatus, str] = {
     OrderStatus.AWAITING_PAYMENT: "⏳ Ожидает оплаты",
@@ -100,3 +101,21 @@ def order_summary(order: OrderOut, catalog: Catalog, *, for_admin: bool = False)
 
 def status_update(order: OrderOut) -> str:
     return f"Заказ №{order.id}: {STATUS_LABELS[order.status]}"
+
+
+def payment_returned(reason: str) -> str:
+    return f"Платёж не принят ({escape(reason)}). Звёзды возвращены."
+
+
+def refund_failed(refund: RefundOut) -> str:
+    order = f"Заказ №{refund.order_id}" if refund.order_id else "Заказ не найден"
+    return "\n".join(
+        [
+            "⚠️ <b>Возврат звёзд не прошёл</b>",
+            "",
+            f"{order} · {refund.amount} ⭐",
+            f"ID платежа: <code>{escape(refund.charge_id)}</code>",
+            f"Попыток: {refund.attempts}, последняя ошибка: {escape(refund.last_error or '')}",
+            f'<a href="tg://user?id={refund.user_id}">Написать клиенту</a>',
+        ]
+    )

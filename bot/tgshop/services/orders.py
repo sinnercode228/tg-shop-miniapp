@@ -4,12 +4,12 @@ notifications meet — transports (REST API, bot updates) stay thin."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
 from tgshop.db.models import Order, OrderItem
-from tgshop.db.repository import OrderRepository
+from tgshop.db.repository import OrderRepository, RefundRepository
 from tgshop.db.session import SessionFactory
 from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import DeliveryMethod, OrderSource, OrderStatus, PaymentMethod
@@ -62,12 +62,15 @@ class OrderService:
         rules: PricingRules,
         notifier: Notifier,
         payments: PaymentGateway | None,
+        refund_recorded: Callable[[], None] | None = None,
     ) -> None:
         self._sessions = session_factory
         self._catalog = catalog
         self._rules = rules
         self._notifier = notifier
         self._payments = payments
+        # Called after a commit that recorded a refund; RefundOutbox.wake sends it right away.
+        self._refund_recorded = refund_recorded or (lambda: None)
 
     @property
     def stars_enabled(self) -> bool:
@@ -266,7 +269,7 @@ class OrderService:
         if order_id is None:
             raise PaymentError(f"Unexpected invoice payload {payload!r}")
 
-        claimed = False
+        claimed = recorded = False
         async with self._sessions() as session, session.begin():
             orders = OrderRepository(session)
             order = await orders.get(order_id, for_update=True)
@@ -297,12 +300,24 @@ class OrderService:
                         total_amount=total_amount,
                         payer_id=payer_id,
                     )
+            if not claimed:
+                # Money was taken but the order can't accept it (e.g. cancelled meanwhile).
+                # The refund is committed before this update is done with; RefundOutbox sends
+                # it. A redelivered update finds it recorded and adds nothing.
+                log.warning(
+                    "refunding orphan payment %s for order %s: %s", charge_id, order_id, error
+                )
+                recorded = await RefundRepository(session).add(
+                    charge_id=charge_id,
+                    user_id=payer_id,
+                    amount=total_amount,
+                    order_id=order.id if order is not None else None,
+                    reason=error or "Заказ не найден",
+                )
 
         if not claimed:
-            # Money was taken but the order can't accept it (e.g. cancelled meanwhile):
-            # give the Stars back immediately instead of leaving it for manual support.
-            log.warning("refunding orphan payment %s for order %s: %s", charge_id, order_id, error)
-            await self._gateway().refund(payer_id, charge_id)
+            if recorded:
+                self._refund_recorded()
             raise PaymentError(error or "Order not found")
 
         await self._notifier.order_placed(dto)
@@ -310,8 +325,11 @@ class OrderService:
         return dto
 
     async def refund(self, order_id: int) -> OrderOut:
+        """Set ``refunded`` and record the refund in one transaction. RefundOutbox calls
+        ``refundStarPayment`` after the commit and tells the customer once it goes through."""
         async with self._sessions() as session, session.begin():
-            order = await OrderRepository(session).get(order_id, for_update=True)
+            orders = OrderRepository(session)
+            order = await orders.get(order_id, for_update=True)
             if order is None:
                 raise NotFound(f"Order {order_id} not found")
             previous = order.status
@@ -321,13 +339,24 @@ class OrderService:
                 delivery=order.delivery_method,
                 payment=order.payment_method,
             )
-            if not order.telegram_payment_charge_id:
+            charge_id = order.telegram_payment_charge_id
+            if not charge_id:
                 raise PaymentError("Order has no captured payment", code="not_refundable")
-            await self._gateway().refund(order.user_id, order.telegram_payment_charge_id)
-            order.set_status(OrderStatus.REFUNDED)
+            if not await orders.move_status(order.id, previous, OrderStatus.REFUNDED):
+                # Another admin changed the order after the read above; see change_status.
+                await session.refresh(order)
+                raise InvalidTransition(f"Order {order_id} is now '{order.status}'")
+            order.set_status(OrderStatus.REFUNDED)  # the row is updated; adds the event
+            await RefundRepository(session).add(
+                charge_id=charge_id,
+                user_id=order.user_id,
+                amount=order.stars_amount or 0,
+                order_id=order.id,
+                reason=None,
+            )
             await session.flush()
             dto = _to_dto(order)
-        await self._notifier.status_changed(dto, previous)
+        self._refund_recorded()
         return dto
 
     async def expire_unpaid(self, *, placed_before: datetime) -> list[OrderOut]:

@@ -37,8 +37,9 @@ async def successful_payment(message: Message, order_service: OrderService) -> N
             charge_id=payment.telegram_payment_charge_id,
         )
     except PaymentError as exc:
-        log.warning("payment rejected and refunded: %s", exc.message)
-        await message.answer(f"Платёж не принят ({exc.message}). Звёзды возвращены.")
+        # If the payment has to go back, the refund is recorded and the customer hears about
+        # it from RefundOutbox once the Stars are back.
+        log.warning("payment rejected: %s", exc.message)
         return
     await message.answer(f"Оплата получена, заказ №{order.id} передан в работу 💫")
 

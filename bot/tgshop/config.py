@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     stars_enabled: bool = True
     # Minutes a Stars order may wait for payment before the bot cancels it; 0 turns it off.
     order_payment_ttl_minutes: int = Field(default=30, ge=0)
+    # Attempts at a Stars refund before it is marked failed and the admins are told.
+    refund_max_attempts: int = Field(default=8, ge=1, le=20)
+    # Seconds before the first retry of a refund; each next retry waits twice as long.
+    refund_retry_seconds: int = Field(default=30, ge=1)
     shared_dir: Path = _DEFAULT_SHARED_DIR
     log_level: str = "INFO"
 

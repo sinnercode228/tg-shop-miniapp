@@ -11,7 +11,13 @@ from typing import Any
 import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import AnswerCallbackQuery, AnswerPreCheckoutQuery, SendMessage
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import (
+    AnswerCallbackQuery,
+    AnswerPreCheckoutQuery,
+    RefundStarPayment,
+    SendMessage,
+)
 from aiogram.methods.base import TelegramMethod, TelegramType
 from aiogram.types import Update
 
@@ -21,14 +27,15 @@ from tgshop.bot.notifier import TelegramNotifier
 from tgshop.bot.texts import money, status_update
 from tgshop.db.session import SessionFactory
 from tgshop.domain.catalog import Catalog
-from tgshop.domain.enums import OrderSource, OrderStatus
+from tgshop.domain.enums import OrderSource, OrderStatus, RefundStatus
 from tgshop.domain.pricing import PricingRules
 from tgshop.domain.schemas import OrderCreate, OrderOut
-from tgshop.payments import make_payload
+from tgshop.payments import TelegramStarsGateway, make_payload
 from tgshop.services.expiry import UnpaidOrderExpiry
 from tgshop.services.orders import Customer, OrderService
+from tgshop.services.refunds import RefundOutbox
 
-from .conftest import BOT_TOKEN, USER_ID, FakePayments, order_payload
+from .conftest import BOT_TOKEN, USER_ID, Clock, FakePayments, order_payload
 
 ADMIN_ID = 900_000_001
 WEBAPP_URL = "https://sinnercode228.github.io/tg-shop-miniapp/"
@@ -38,6 +45,11 @@ class RecordingSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[TelegramMethod[Any]] = []
+        self.refusals: dict[type[TelegramMethod[Any]], str] = {}
+
+    def refuse(self, kind: type[TelegramMethod[Any]], description: str) -> None:
+        """Answer every later ``kind`` call with a Bot API 400 error."""
+        self.refusals[kind] = description
 
     async def make_request(
         self,
@@ -46,6 +58,8 @@ class RecordingSession(BaseSession):
         timeout: int | None = None,  # noqa: ASYNC109 - aiogram signature
     ) -> TelegramType:
         self.calls.append(method)
+        if type(method) in self.refusals:
+            raise TelegramBadRequest(method=method, message=self.refusals[type(method)])
         return True  # type: ignore[return-value]  # handlers ignore API results
 
     async def stream_content(self, *args: Any, **kwargs: Any) -> AsyncGenerator[bytes, None]:
@@ -66,6 +80,20 @@ def session() -> RecordingSession:
 @pytest.fixture
 def bot(session: RecordingSession) -> Bot:
     return Bot(BOT_TOKEN, session=session)
+
+
+@pytest.fixture
+def telegram_outbox(
+    bot: Bot, session_factory: SessionFactory, catalog: Catalog, clock: Clock
+) -> RefundOutbox:
+    """Sends refunds and their messages through ``bot``."""
+    return RefundOutbox(
+        session_factory,
+        TelegramStarsGateway(bot),
+        TelegramNotifier(bot, catalog, [ADMIN_ID]),
+        max_attempts=2,
+        clock=clock,
+    )
 
 
 @pytest.fixture
@@ -202,7 +230,7 @@ async def test_payment_for_an_expired_order_is_refunded_and_explained(
     bot: Bot,
     session: RecordingSession,
     service: OrderService,
-    payments: FakePayments,
+    telegram_outbox: RefundOutbox,
 ) -> None:
     created = await service.place_order(
         Customer(user_id=USER_ID), OrderCreate.model_validate(order_payload(paymentMethod="stars"))
@@ -217,10 +245,15 @@ async def test_payment_for_an_expired_order_is_refunded_and_explained(
     }
 
     await dp.feed_update(bot, message_update(USER_ID, successful_payment=payment))
+    assert session.sent(RefundStarPayment) == [], "the outbox calls it after the commit"
+    assert session.sent(SendMessage) == [], "nothing is promised before the Stars are back"
+    await telegram_outbox.run_once()
 
-    assert payments.refunds == [(USER_ID, "tg-charge-late")]
+    [refund] = session.sent(RefundStarPayment)
+    assert (refund.user_id, refund.telegram_payment_charge_id) == (USER_ID, "tg-charge-late")
     [reply] = session.sent(SendMessage)
-    assert "Звёзды возвращены" in reply.text
+    assert reply.chat_id == USER_ID
+    assert reply.text == "Платёж не принят (Заказ уже оплачен или отменён). Звёзды возвращены."
     order = await service.get(created.order.id)
     assert order is not None
     assert order.status is OrderStatus.CANCELLED
@@ -253,6 +286,89 @@ async def test_expired_order_is_announced_to_the_customer_and_the_admins(
     assert "Заказ не оплачен" in to_admin.text
     assert f"Заказ №{expired.id}</b> · ✖️ Отменён" in to_admin.text
     assert "+79000000000" in to_admin.text, "admins see who abandoned the order"
+
+
+async def paid_order(service: OrderService) -> OrderOut:
+    created = await service.place_order(
+        Customer(user_id=USER_ID), OrderCreate.model_validate(order_payload(paymentMethod="stars"))
+    )
+    return await service.mark_paid(
+        payload=make_payload(created.order.id),
+        currency="XTR",
+        total_amount=created.order.stars_amount or 0,
+        payer_id=USER_ID,
+        charge_id="tg-charge-1",
+    )
+
+
+async def test_charge_that_telegram_already_refunded_counts_as_done(
+    session: RecordingSession, service: OrderService, telegram_outbox: RefundOutbox
+) -> None:
+    refunded = await service.refund((await paid_order(service)).id)
+    # An earlier attempt went through, but its answer never reached the bot.
+    session.refuse(RefundStarPayment, "Bad Request: CHARGE_ALREADY_REFUNDED")
+
+    [refund] = await telegram_outbox.run_once()
+
+    assert (refund.status, refund.attempts) == (RefundStatus.DONE, 1)
+    [call] = session.sent(RefundStarPayment)
+    assert (call.user_id, call.telegram_payment_charge_id) == (USER_ID, "tg-charge-1")
+    [to_customer] = session.sent(SendMessage)
+    assert to_customer.chat_id == USER_ID
+    assert to_customer.text == status_update(refunded), "the same text as before the outbox"
+
+
+async def test_refund_telegram_keeps_refusing_is_handed_to_the_admins(
+    session: RecordingSession, service: OrderService, telegram_outbox: RefundOutbox, clock: Clock
+) -> None:
+    order = await service.refund((await paid_order(service)).id)
+    session.refuse(RefundStarPayment, "Bad Request: CHARGE_NOT_FOUND")
+
+    [first] = await telegram_outbox.run_once()
+    assert first.status is RefundStatus.PENDING
+    assert session.sent(SendMessage) == []
+    clock.advance(seconds=30)
+    [refund] = await telegram_outbox.run_once()
+
+    assert refund.status is RefundStatus.FAILED
+    assert len(session.sent(RefundStarPayment)) == 2
+    [to_admin] = session.sent(SendMessage)
+    assert to_admin.chat_id == ADMIN_ID
+    assert "Возврат звёзд не прошёл" in to_admin.text
+    assert f"Заказ №{order.id}" in to_admin.text
+    assert "<code>tg-charge-1</code>" in to_admin.text, "admins can find the charge"
+    assert "CHARGE_NOT_FOUND" in to_admin.text
+    assert f"tg://user?id={USER_ID}" in to_admin.text
+
+
+async def test_admin_refund_command_records_the_refund(
+    dp: Dispatcher,
+    bot: Bot,
+    session: RecordingSession,
+    service: OrderService,
+    telegram_outbox: RefundOutbox,
+) -> None:
+    order = await paid_order(service)
+
+    await dp.feed_update(bot, command(ADMIN_ID, "/refund"))
+    await dp.feed_update(bot, command(ADMIN_ID, "/refund 999"))
+    await dp.feed_update(bot, command(ADMIN_ID, f"/refund {order.id}"))
+    usage, missing, accepted = (m.text for m in session.sent(SendMessage))
+    assert usage == "Использование: /refund <id>"
+    assert missing.startswith("Возврат не выполнен")
+    assert accepted.startswith(f"Возврат по заказу №{order.id} оформлен")
+    assert session.sent(RefundStarPayment) == []
+    refunded = await service.get(order.id)
+    assert refunded is not None
+    assert refunded.status is OrderStatus.REFUNDED
+
+    session.calls.clear()
+    await telegram_outbox.run_once()
+
+    [call] = session.sent(RefundStarPayment)
+    assert call.telegram_payment_charge_id == "tg-charge-1"
+    [to_customer] = session.sent(SendMessage)
+    assert (to_customer.chat_id, to_customer.text) == (USER_ID, status_update(refunded))
 
 
 async def test_admin_commands_are_admin_only(
