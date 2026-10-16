@@ -119,7 +119,7 @@ Docker: `cp bot/.env.example bot/.env`, set `BOT_TOKEN`, then `docker compose up
 Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Node 22):
 
 ```bash
-(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 143 tests, 95 % coverage
+(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 144 tests, 95 % coverage
 (cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 42 vitest tests
 ```
 

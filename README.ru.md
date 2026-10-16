@@ -119,7 +119,7 @@ Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN`, затем `
 Проверки, те же, что в [CI](.github/workflows/ci.yml) (Python 3.12 и 3.14, Node 22):
 
 ```bash
-(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 143 теста, покрытие 95 %
+(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 144 теста, покрытие 95 %
 (cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 42 теста vitest
 ```
 

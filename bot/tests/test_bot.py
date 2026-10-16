@@ -3,9 +3,11 @@ recording session instead of the network."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,13 +27,17 @@ from tgshop.bot.factory import create_dispatcher
 from tgshop.bot.keyboards import OrderAction, admin_order
 from tgshop.bot.notifier import TelegramNotifier
 from tgshop.bot.texts import money, status_update
-from tgshop.db.session import SessionFactory
+from tgshop.config import Settings
+from tgshop.container import build_container
+from tgshop.db.repository import RefundRepository
+from tgshop.db.session import SessionFactory, init_models
 from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import OrderSource, OrderStatus, RefundStatus
 from tgshop.domain.pricing import PricingRules
 from tgshop.domain.schemas import OrderCreate, OrderOut
 from tgshop.payments import TelegramStarsGateway, make_payload
 from tgshop.services.expiry import UnpaidOrderExpiry
+from tgshop.services.notifier import NullNotifier
 from tgshop.services.orders import Customer, OrderService
 from tgshop.services.refunds import RefundOutbox
 
@@ -367,6 +373,62 @@ async def test_admin_refund_command_records_the_refund(
 
     [call] = session.sent(RefundStarPayment)
     assert call.telegram_payment_charge_id == "tg-charge-1"
+    [to_customer] = session.sent(SendMessage)
+    assert (to_customer.chat_id, to_customer.text) == (USER_ID, status_update(refunded))
+
+
+async def test_bot_sends_an_admin_refund_right_after_it_is_recorded(
+    session: RecordingSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # STARS_ENABLED=false stops new Stars payments; charges taken before still go back.
+    settings = Settings(
+        _env_file=None,
+        bot_token=BOT_TOKEN,
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'shop.db'}",
+        stars_enabled=False,
+        order_payment_ttl_minutes=0,
+    )
+    container = build_container(settings)
+    container.bot.session = session
+    await init_models(container.engine)
+    paid_before = OrderService(
+        session_factory=container.session_factory,
+        catalog=container.catalog,
+        rules=container.rules,
+        notifier=NullNotifier(),
+        payments=FakePayments(),
+    )
+    order = await paid_order(paid_before)
+
+    due = RefundRepository.due
+    order_refunded = TelegramNotifier.order_refunded
+    swept, told = asyncio.Event(), asyncio.Event()
+
+    async def due_then_signal(self: RefundRepository, moment: datetime) -> Any:
+        found = await due(self, moment)
+        swept.set()
+        return found
+
+    async def order_refunded_then_signal(self: TelegramNotifier, order: OrderOut) -> None:
+        await order_refunded(self, order)
+        told.set()
+
+    monkeypatch.setattr(RefundRepository, "due", due_then_signal)
+    monkeypatch.setattr(TelegramNotifier, "order_refunded", order_refunded_then_signal)
+    dp = container.dispatcher()
+    await dp.emit_startup()
+    try:
+        async with asyncio.timeout(5):
+            await swept.wait()  # the sweep at startup, before there is anything to send
+            refunded = await container.order_service.refund(order.id)
+            # The next sweep is 10 s away: only the wake gets the refund out in time.
+            await told.wait()
+    finally:
+        await dp.emit_shutdown()
+        await container.aclose()
+
+    [call] = session.sent(RefundStarPayment)
+    assert (call.user_id, call.telegram_payment_charge_id) == (USER_ID, "tg-charge-1")
     [to_customer] = session.sent(SendMessage)
     assert (to_customer.chat_id, to_customer.text) == (USER_ID, status_update(refunded))
 
