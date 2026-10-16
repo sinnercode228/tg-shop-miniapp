@@ -324,11 +324,40 @@ def test_refund_retries_are_read_from_the_environment(monkeypatch: pytest.Monkey
         ("REFUND_MAX_ATTEMPTS", "0"),
         ("REFUND_MAX_ATTEMPTS", "21"),
         ("REFUND_RETRY_SECONDS", "0"),
+        ("REFUND_RETRY_SECONDS", "86401"),
     ]:
         monkeypatch.setenv(name, value)
         with pytest.raises(ValidationError):
             settings()
         monkeypatch.setenv(name, "1")
+
+
+async def test_refund_with_the_longest_retry_settings_still_ends_failed(
+    session_factory: SessionFactory, payments: FakePayments, notifier: FakeNotifier, clock: Clock
+) -> None:
+    # A first wait of a week would carry the last retry past year 9999: every sweep would then
+    # send the refund again, and it would never end failed.
+    longest = settings(refund_max_attempts=20, refund_retry_seconds=24 * 60 * 60)
+    outbox = RefundOutbox(
+        session_factory,
+        payments,
+        notifier,
+        max_attempts=longest.refund_max_attempts,
+        retry_delay=timedelta(seconds=longest.refund_retry_seconds),
+        clock=clock,
+    )
+    async with session_factory() as session, session.begin():
+        await RefundRepository(session).add(
+            charge_id="charge-1", user_id=USER_ID, amount=100, order_id=None, reason="test"
+        )
+    payments.refund_errors = [RuntimeError("Telegram is down") for _ in range(20)]
+
+    for _ in range(20):
+        [refund] = await outbox.run_once()
+        clock.now = refund.next_attempt_at
+
+    assert (refund.status, refund.attempts) == (RefundStatus.FAILED, 20)
+    assert notifier.failed_refunds == [refund]
 
 
 async def test_bot_sends_refunds_while_it_polls() -> None:
