@@ -20,7 +20,12 @@ export function OrderPage() {
   const navigate = useNavigate();
   const catalog = useCatalog((s) => s.catalog);
   const [paying, setPaying] = useState(false);
-  const [cancelledNote, setCancelledNote] = useState(params.get('payment') === 'cancelled');
+  const initialPayment = params.get('payment');
+  const [paymentNote, setPaymentNote] = useState<'pending' | 'cancelled' | 'failed' | null>(
+    initialPayment === 'pending' || initialPayment === 'cancelled' || initialPayment === 'failed'
+      ? initialPayment
+      : null,
+  );
   const { data: order, error, reload } = useAsync(() => api.getOrder(Number(id)), `order:${id}`);
   const placed = params.get('placed') === '1';
   useBackButton(true, placed ? '/' : '/orders');
@@ -30,7 +35,7 @@ export function OrderPage() {
     setPaying(true);
     const result = await api.payOrder(order).catch(() => 'failed' as const);
     setPaying(false);
-    setCancelledNote(result !== 'paid');
+    setPaymentNote(result === 'paid' ? null : result);
     haptic.notify(result === 'paid' ? 'success' : 'warning');
     reload();
   };
@@ -107,8 +112,10 @@ export function OrderPage() {
           {t('order')} #{order.id} · {formatMoney(order.total, lang)}
         </p>
         {placed && !awaiting && <p className="mt-3 text-sm">{t('thanks')}</p>}
-        {cancelledNote && awaiting && (
-          <p className="mt-3 rounded-xl bg-amber-400/15 p-3 text-sm">{t('paymentCancelled')}</p>
+        {paymentNote && awaiting && (
+          <p className="mt-3 rounded-xl bg-amber-400/15 p-3 text-sm">
+            {t(paymentNote === 'pending' ? 'paymentPending' : 'paymentCancelled')}
+          </p>
         )}
       </motion.div>
 

@@ -2,6 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { api } from './api';
+import { useDemoInvoice } from './api/demoInvoice';
 import { routes } from './App';
 import { useLang } from './i18n';
 import { useCart } from './store/cart';
@@ -51,6 +52,38 @@ describe('shop flow (browser fallback, mock API)', () => {
     expect(await screen.findByText('Заказ оформлен', {}, { timeout: 3000 })).toBeInTheDocument();
     expect(router.state.location.pathname).toMatch(/^\/orders\/\d+$/);
     expect(useCart.getState().lines).toEqual([]);
+  });
+
+  it('shows the pending-payment note when the Stars invoice is left pending, not the cancelled one', async () => {
+    const user = userEvent.setup();
+    useCart.getState().add('gaiwan', 'std', null, 1);
+    renderAt('/checkout');
+
+    await user.click(await screen.findByRole('radio', { name: /Самовывоз/ }));
+    await user.type(screen.getByLabelText('Имя'), 'Анна');
+    await user.type(screen.getByLabelText('Телефон'), '+7 900 123-45-67');
+
+    const main = await screen.findByTestId('main-button');
+    await within(main).findByText(/Оплатить/);
+
+    // Settle the demo Stars invoice as 'pending' as soon as it opens — this is what
+    // Telegram.WebApp.openInvoice reports when the user closes the sheet without
+    // confirming or cancelling and the Stars payment may still land.
+    const stop = useDemoInvoice.subscribe((state) => {
+      if (state.invoice) useDemoInvoice.getState().settle('pending');
+    });
+    try {
+      await user.click(main);
+      const note = await screen.findByText(
+        /ещё не подтверждена|still being processed/i,
+        {},
+        { timeout: 3000 },
+      );
+      expect(note).toBeInTheDocument();
+      expect(screen.queryByText(/Оплата отменена/)).not.toBeInTheDocument();
+    } finally {
+      stop();
+    }
   });
 
   it('shows a Stars order cancelled for lack of payment as cancelled', async () => {
