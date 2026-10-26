@@ -1,5 +1,5 @@
 import { bundledCatalog, pricingRules } from '../domain/data';
-import type { OrderCreate } from '../domain/types';
+import type { Lang, OrderCreate } from '../domain/types';
 import { MockShopApi, type KeyValueStore } from './mock';
 import { ApiError } from './types';
 
@@ -19,7 +19,19 @@ const base: OrderCreate = {
 
 describe('MockShopApi', () => {
   let now = Date.parse('2026-01-01T10:00:00Z');
-  const make = () => new MockShopApi(bundledCatalog, pricingRules, memoryStore(), () => now, 0);
+  let lang: Lang = 'ru';
+  const make = () =>
+    new MockShopApi(
+      bundledCatalog,
+      pricingRules,
+      memoryStore(),
+      () => now,
+      0,
+      () => lang,
+    );
+  beforeEach(() => {
+    lang = 'ru';
+  });
 
   it('prices from the catalog, not from the client', async () => {
     const api = make();
@@ -96,5 +108,21 @@ describe('MockShopApi', () => {
     const b = await api.createOrder(base);
     expect(b.order.id).toBe(a.order.id + 1);
     expect((await api.listOrders()).map((o) => o.id)).toEqual([b.order.id, a.order.id]);
+  });
+
+  it('snapshots item titles and variant labels in the current UI language', async () => {
+    const api = make();
+    const kenya = bundledCatalog.products.find((p) => p.id === 'kenya-aa')!;
+    const variant = kenya.variants.find((v) => v.id === '250g')!;
+
+    lang = 'en';
+    const { order: enOrder } = await api.createOrder(base);
+    expect(enOrder.items[0]!.title).toBe(kenya.name.en);
+    expect(enOrder.items[0]!.variantLabel).toBe(variant.label.en);
+
+    lang = 'ru';
+    const { order: ruOrder } = await api.createOrder(base);
+    expect(ruOrder.items[0]!.title).toBe(kenya.name.ru);
+    expect(ruOrder.items[0]!.variantLabel).toBe(variant.label.ru);
   });
 });

@@ -1,4 +1,5 @@
 import { bundledCatalog, pricingRules } from '../domain/data';
+import { useLang } from '../i18n';
 import { HttpShopApi } from './http';
 import { MockShopApi } from './mock';
 import type { ShopApi } from './types';
@@ -11,7 +12,14 @@ export function createApi(env: ImportMetaEnv = import.meta.env): ShopApi {
   if (env.VITE_API_MODE === 'http') {
     return new HttpShopApi((env.VITE_API_URL ?? '').replace(/\/$/, ''));
   }
-  return new MockShopApi(bundledCatalog, pricingRules);
+  return new MockShopApi(
+    bundledCatalog,
+    pricingRules,
+    undefined,
+    undefined,
+    undefined,
+    () => useLang.getState().lang,
+  );
 }
 
 export const api: ShopApi = createApi();

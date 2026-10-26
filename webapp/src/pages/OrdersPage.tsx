@@ -6,11 +6,13 @@ import { Button, EmptyState, Skeleton } from '../components/ui';
 import { useAsync } from '../hooks/useAsync';
 import { formatMoney } from '../domain/money';
 import { useT } from '../i18n';
+import { useCatalog } from '../store/catalog';
 import { useBackButton } from '../telegram/hooks';
 
 export function OrdersPage() {
-  const { t, lang } = useT();
+  const { t, l, lang } = useT();
   const navigate = useNavigate();
+  const catalog = useCatalog((s) => s.catalog);
   const { data: orders, error, reload } = useAsync(() => api.listOrders(), 'orders');
   useBackButton(true, '/');
 
@@ -65,7 +67,12 @@ export function OrdersPage() {
                 <StatusBadge status={o.status} />
               </div>
               <div className="mt-1 truncate text-sm text-hint">
-                {o.items.map((it) => `${it.title} × ${it.quantity}`).join(', ')}
+                {o.items
+                  .map((it) => {
+                    const product = catalog?.products.find((p) => p.id === it.productId);
+                    return `${product ? l(product.name) : it.title} × ${it.quantity}`;
+                  })
+                  .join(', ')}
               </div>
               <div className="mt-2 flex items-center justify-between text-sm">
                 <span className="text-hint">{dateFmt.format(new Date(o.createdAt))}</span>
