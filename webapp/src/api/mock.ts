@@ -7,6 +7,7 @@ import { calculateQuote, PricingError, type PricingRules } from '../domain/prici
 import type {
   Catalog,
   CartItemIn,
+  Lang,
   Order,
   OrderCreate,
   OrderCreated,
@@ -71,6 +72,7 @@ export class MockShopApi implements ShopApi {
     private readonly store: KeyValueStore = browserStore,
     private readonly now: () => number = Date.now,
     private readonly latencyMs = 250,
+    private readonly getLang: () => Lang = () => 'ru',
   ) {}
 
   private delay<T>(value: T): Promise<T> {
@@ -100,7 +102,7 @@ export class MockShopApi implements ShopApi {
     return { ...rest, status: events.at(-1)?.status ?? 'new', events };
   }
 
-  private resolve(items: CartItemIn[], lang: 'ru' | 'en'): OrderItem[] {
+  private resolve(items: CartItemIn[], lang: Lang): OrderItem[] {
     const merged = new Map<string, OrderItem>();
     for (const item of items) {
       const product = this.catalog.products.find((p) => p.id === item.productId);
@@ -146,7 +148,7 @@ export class MockShopApi implements ShopApi {
   }
 
   async quote(req: QuoteRequest): Promise<Quote> {
-    return this.delay(this.price(this.resolve(req.items, 'ru'), req));
+    return this.delay(this.price(this.resolve(req.items, this.getLang()), req));
   }
 
   async createOrder(body: OrderCreate): Promise<OrderCreated> {
@@ -159,7 +161,7 @@ export class MockShopApi implements ShopApi {
       if (!this.catalog.pickupPoints.some((p) => p.id === body.pickupPointId))
         throw new ApiError(422, 'invalid_request', 'Unknown pickup point');
     }
-    const items = this.resolve(body.items, 'ru');
+    const items = this.resolve(body.items, this.getLang());
     const quote = this.price(items, body);
     if (body.promoCode?.trim() && quote.promoError)
       throw new ApiError(422, 'unknown_promo', 'Unknown promo code');

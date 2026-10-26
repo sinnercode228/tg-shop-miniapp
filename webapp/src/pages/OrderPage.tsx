@@ -157,6 +157,7 @@ export function OrderPage() {
           {order.items.map((it) => {
             const g = grind(it.grind);
             const product = catalog?.products.find((p) => p.id === it.productId);
+            const variant = product?.variants.find((v) => v.id === it.variantId);
             return (
               <li
                 key={`${it.productId}-${it.variantId}-${it.grind}`}
@@ -165,7 +166,7 @@ export function OrderPage() {
                 <span>
                   <span className="font-semibold">{product ? l(product.name) : it.title}</span>
                   <span className="block text-xs text-hint">
-                    {it.variantLabel}
+                    {variant ? l(variant.label) : it.variantLabel}
                     {g ? ` · ${l(g.name)}` : ''} · {t('itemsCount', { n: it.quantity })}
                   </span>
                 </span>
