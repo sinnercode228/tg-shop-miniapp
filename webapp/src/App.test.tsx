@@ -86,6 +86,35 @@ describe('shop flow (browser fallback, mock API)', () => {
     }
   });
 
+  it('waits for the bot to confirm a paid Stars order instead of offering to pay again', async () => {
+    const { order } = await api.createOrder({
+      items: [{ productId: 'gaiwan', variantId: 'std', grind: null, quantity: 1 }],
+      deliveryMethod: 'pickup',
+      pickupPointId: 'kofeynaya-12',
+      deliverySlot: 'asap',
+      paymentMethod: 'stars',
+      customer: { name: 'Анна', phone: '+79001234567' },
+    });
+    const paidAt = { status: 'paid' as const, createdAt: order.createdAt };
+    // In http mode the order stays awaiting_payment until the bot reads successful_payment.
+    const getOrder = vi
+      .spyOn(api, 'getOrder')
+      .mockResolvedValueOnce(order)
+      .mockResolvedValueOnce(order)
+      .mockResolvedValue({ ...order, status: 'paid', events: [...order.events, paidAt] });
+    try {
+      renderAt(`/orders/${order.id}?placed=1&payment=paid`);
+      expect(await screen.findByRole('heading', { name: 'Ожидает оплаты' })).toBeInTheDocument();
+      expect(screen.getByTestId('main-button')).not.toHaveTextContent(/Оплатить/);
+      expect(
+        await screen.findByRole('heading', { name: 'Заказ оплачен' }, { timeout: 5000 }),
+      ).toBeInTheDocument();
+      expect(getOrder).toHaveBeenCalledTimes(3);
+    } finally {
+      getOrder.mockRestore();
+    }
+  });
+
   it('shows a Stars order cancelled for lack of payment as cancelled', async () => {
     const { order } = await api.createOrder({
       items: [{ productId: 'gaiwan', variantId: 'std', grind: null, quantity: 1 }],

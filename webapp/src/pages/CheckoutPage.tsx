@@ -130,7 +130,7 @@ export function CheckoutPage() {
       let paid: string | null = null;
       if (order.status === 'awaiting_payment') paid = await api.payOrder(order, invoiceUrl);
       haptic.notify(paid === null || paid === 'paid' ? 'success' : 'warning');
-      navigate(`/orders/${order.id}?placed=1${paid && paid !== 'paid' ? `&payment=${paid}` : ''}`, {
+      navigate(`/orders/${order.id}?placed=1${paid ? `&payment=${paid}` : ''}`, {
         replace: true,
       });
     } catch (e) {

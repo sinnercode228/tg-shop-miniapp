@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { motion } from 'motion/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { api, ApiError } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
@@ -12,6 +12,13 @@ import { useT } from '../i18n';
 import { useCatalog } from '../store/catalog';
 import { useBackButton, useMainButton } from '../telegram/hooks';
 import { haptic } from '../telegram/sdk';
+
+/**
+ * After Telegram reports an invoice paid, the order stays awaiting_payment until the bot reads
+ * successful_payment, so the page re-reads it this often, this many times, before giving up.
+ */
+const CONFIRM_INTERVAL_MS = 1500;
+const CONFIRM_ATTEMPTS = 8;
 
 export function OrderPage() {
   const { id } = useParams();
@@ -26,9 +33,26 @@ export function OrderPage() {
       ? initialPayment
       : null,
   );
+  const [confirming, setConfirming] = useState(initialPayment === 'paid');
+  const [checks, setChecks] = useState(0);
   const { data: order, error, reload } = useAsync(() => api.getOrder(Number(id)), `order:${id}`);
   const placed = params.get('placed') === '1';
   useBackButton(true, placed ? '/' : '/orders');
+
+  const waitingForBot = confirming && order?.status === 'awaiting_payment';
+  useEffect(() => {
+    if (!waitingForBot) return undefined;
+    const timer = setTimeout(() => {
+      if (checks < CONFIRM_ATTEMPTS) {
+        setChecks(checks + 1);
+        reload();
+      } else {
+        setConfirming(false);
+        setPaymentNote('pending');
+      }
+    }, CONFIRM_INTERVAL_MS);
+    return () => clearTimeout(timer);
+  }, [waitingForBot, checks, reload]);
 
   const pay = async () => {
     if (!order) return;
@@ -36,6 +60,8 @@ export function OrderPage() {
     const result = await api.payOrder(order).catch(() => 'failed' as const);
     setPaying(false);
     setPaymentNote(result === 'paid' ? null : result);
+    setChecks(0);
+    setConfirming(result === 'paid');
     haptic.notify(result === 'paid' ? 'success' : 'warning');
     reload();
   };
@@ -43,9 +69,14 @@ export function OrderPage() {
   useMainButton(
     order?.status === 'awaiting_payment'
       ? {
-          text: t('payStars', { stars: formatStars(order.starsAmount ?? 0, lang) }),
-          progress: paying,
-          onClick: () => void pay(),
+          text: waitingForBot
+            ? t('paymentConfirming')
+            : t('payStars', { stars: formatStars(order.starsAmount ?? 0, lang) }),
+          progress: paying || waitingForBot,
+          disabled: waitingForBot,
+          onClick: () => {
+            if (!waitingForBot) void pay();
+          },
         }
       : placed
         ? { text: t('goShopping'), onClick: () => navigate('/') }
