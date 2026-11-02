@@ -29,6 +29,7 @@ from aiogram_stars import (
     StarsPayments,
 )
 from aiogram_stars.sqlalchemy import SqlAlchemyStorage
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tgshop.bot.keyboards import OrderAction, admin_order
@@ -155,6 +156,20 @@ async def test_invoice_payload_is_signed_for_the_order_and_its_amount(
         signed_for = PayloadSigner(STARS_SECRET).verify(invoice.payload, order.stars_amount or 0)
         assert signed_for == str(order.id)
     assert message.chat_id == USER_ID
+
+
+def test_example_env_does_not_start_until_stars_secret_is_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A secret everyone can read in the repository would let anyone sign invoice payloads.
+    monkeypatch.delenv("STARS_SECRET", raising=False)
+    example = Path(__file__).resolve().parents[1] / ".env.example"
+
+    with pytest.raises(ValidationError, match="stars_secret"):
+        Settings(_env_file=example)
+
+    monkeypatch.setenv("STARS_SECRET", STARS_SECRET)
+    assert Settings(_env_file=example).stars_secret.get_secret_value() == STARS_SECRET
 
 
 async def test_pre_checkout_declines_a_payload_the_bot_did_not_sign(

@@ -103,7 +103,7 @@ cd webapp && npm ci && npm run dev        # http://localhost:5173
 cd bot
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env
+cp .env.example .env                      # then set STARS_SECRET in it
 python -m tgshop --mode api               # :8080, OpenAPI at /api/docs
 ```
 
@@ -112,7 +112,7 @@ python -m tgshop --mode api               # :8080, OpenAPI at /api/docs
 cd webapp && VITE_API_MODE=http npm run dev
 ```
 
-`--mode api` runs with the example `.env` as is. `--mode all` (the default, bot and API) and `--mode bot` set the bot's commands and menu button on startup, so they need a real `BOT_TOKEN` from @BotFather; with the placeholder token they exit with `TelegramUnauthorizedError`. Admin user ids go into `ADMIN_IDS`; the other variables are listed in [`bot/.env.example`](bot/.env.example).
+`--mode api` runs with the example `.env` once `STARS_SECRET` is set; the example leaves it empty, so no deployment signs invoices with a secret from this repository. `--mode all` (the default, bot and API) and `--mode bot` set the bot's commands and menu button on startup, so they need a real `BOT_TOKEN` from @BotFather; with the placeholder token they exit with `TelegramUnauthorizedError`. Admin user ids go into `ADMIN_IDS`; the other variables are listed in [`bot/.env.example`](bot/.env.example).
 
 In a browser, `http` mode can load `/api/catalog` and `/api/quote`, but orders get a 401 without initData, so placing one needs the Telegram client. `WEBAPP_URL` defaults to the GitHub Pages demo, which runs on mock data and never calls your API; point it at an HTTPS address that serves an `http` build.
 

@@ -103,7 +103,7 @@ cd webapp && npm ci && npm run dev        # http://localhost:5173
 cd bot
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env
+cp .env.example .env                      # затем вписать в него STARS_SECRET
 python -m tgshop --mode api               # :8080, OpenAPI на /api/docs
 ```
 
@@ -112,7 +112,7 @@ python -m tgshop --mode api               # :8080, OpenAPI на /api/docs
 cd webapp && VITE_API_MODE=http npm run dev
 ```
 
-`--mode api` работает с `.env` из примера без правок. `--mode all` (по умолчанию, бот и API) и `--mode bot` на старте выставляют боту команды и кнопку меню, поэтому им нужен настоящий `BOT_TOKEN` от @BotFather; с токеном-заглушкой они падают с `TelegramUnauthorizedError`. Id админов идут в `ADMIN_IDS`, остальные переменные перечислены в [`bot/.env.example`](bot/.env.example).
+`--mode api` работает с `.env` из примера, когда в нём задан `STARS_SECRET`; в примере он пустой, чтобы ни одна установка не подписывала счета секретом из этого репозитория. `--mode all` (по умолчанию, бот и API) и `--mode bot` на старте выставляют боту команды и кнопку меню, поэтому им нужен настоящий `BOT_TOKEN` от @BotFather; с токеном-заглушкой они падают с `TelegramUnauthorizedError`. Id админов идут в `ADMIN_IDS`, остальные переменные перечислены в [`bot/.env.example`](bot/.env.example).
 
 В браузере в режиме `http` работают `/api/catalog` и `/api/quote`, а заказы без initData получают 401, так что оформить заказ можно только из клиента Telegram. `WEBAPP_URL` по умолчанию указывает на демо на GitHub Pages, которое работает на демо-данных и к вашему API не обращается; укажите там HTTPS-адрес, где отдаётся сборка в режиме `http`.
 
