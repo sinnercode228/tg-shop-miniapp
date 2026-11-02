@@ -41,9 +41,3 @@ class OrderStatus(StrEnum):
 
 
 _FINAL = frozenset({OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.REFUNDED})
-
-
-class RefundStatus(StrEnum):
-    PENDING = "pending"
-    DONE = "done"
-    FAILED = "failed"

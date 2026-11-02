@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     )
 
     init_data_ttl: int = Field(default=24 * 60 * 60, ge=60)
+    # Signs Stars invoice payloads (aiogram-stars). Changing it turns down invoices sent before.
+    stars_secret: SecretStr = Field(min_length=16)
     stars_enabled: bool = True
     # Minutes a Stars order may wait for payment before the bot cancels it; 0 turns it off.
     order_payment_ttl_minutes: int = Field(default=30, ge=0)

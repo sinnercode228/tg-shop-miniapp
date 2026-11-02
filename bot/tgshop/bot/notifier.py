@@ -37,7 +37,9 @@ class TelegramNotifier:
             try:
                 await self._bot.send_message(admin_id, refund_failed(refund))
             except TelegramAPIError:
-                log.exception("failed to notify admin %s about refund %s", admin_id, refund.id)
+                log.exception(
+                    "failed to notify admin %s about refund %s", admin_id, refund.charge_id
+                )
 
     async def _tell_admins(self, order: OrderOut, title: str) -> None:
         text = f"{title}\n\n" + order_summary(order, self._catalog, for_admin=True)

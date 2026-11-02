@@ -6,11 +6,12 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonWebApp, WebAppInfo
+from aiogram_stars import StarsPayments
 
 from tgshop.domain.catalog import Catalog
 from tgshop.services.orders import OrderService
 
-from .handlers import admin, common, payments, webapp
+from .handlers import admin, common, webapp
 
 
 def create_bot(token: str) -> Bot:
@@ -20,6 +21,7 @@ def create_bot(token: str) -> Bot:
 def create_dispatcher(
     *,
     order_service: OrderService,
+    stars: StarsPayments,
     catalog: Catalog,
     admin_ids: Iterable[int],
     webapp_url: str,
@@ -31,13 +33,14 @@ def create_dispatcher(
         admin_ids=frozenset(admin_ids),
         webapp_url=webapp_url,
     )
-    # Payments first: pre-checkout queries must be answered fast and never be shadowed.
     dp.include_routers(
-        payments.create_router(),
         admin.create_router(),
         webapp.create_router(),
         common.create_router(),
     )
+    # Stars payment updates; aiogram-stars puts its router ahead of the ones above, so
+    # pre-checkout queries are answered fast and never shadowed. Also runs its refund outbox.
+    stars.setup(dp)
     return dp
 
 

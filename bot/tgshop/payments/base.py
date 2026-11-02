@@ -11,7 +11,6 @@ class Invoice:
     description: str
     label: str
     amount: int
-    payload: str
 
 
 class PaymentGateway(Protocol):
@@ -23,6 +22,10 @@ class PaymentGateway(Protocol):
         """Send an invoice message to a chat (used by the ``web_app_data`` flow)."""
         ...
 
-    async def refund(self, user_id: int, charge_id: str) -> None:
-        """Return the charge to the payer. Returns normally if it was returned before."""
+
+class RefundQueue(Protocol):
+    async def refund(
+        self, charge_id: str, *, user_id: int | None = None, reason: str | None = None
+    ) -> object:
+        """Store a refund of the charge to ``user_id``; it is sent in the background."""
         ...

@@ -1,4 +1,4 @@
-"""Data access for orders and refunds. Keeps SQL out of the service layer."""
+"""Data access for orders. Keeps SQL out of the service layer."""
 
 from __future__ import annotations
 
@@ -7,12 +7,11 @@ from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, select, update
-from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tgshop.domain.enums import OrderStatus, RefundStatus
+from tgshop.domain.enums import OrderStatus
 
-from .models import Order, Refund
+from .models import Order
 
 
 class OrderRepository:
@@ -28,6 +27,11 @@ class OrderRepository:
         stmt = select(Order).where(Order.id == order_id)
         if for_update:
             stmt = stmt.with_for_update()
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_charge(self, charge_id: str) -> Order | None:
+        """The order paid with the Stars charge ``charge_id``."""
+        stmt = select(Order).where(Order.telegram_payment_charge_id == charge_id)
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def move_status(
@@ -74,47 +78,4 @@ class OrderRepository:
         stmt = select(Order).order_by(Order.id.desc()).limit(limit)
         if statuses:
             stmt = stmt.where(Order.status.in_(statuses))
-        return (await self._session.execute(stmt)).scalars().all()
-
-
-class RefundRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def add(
-        self, *, charge_id: str, user_id: int, amount: int, order_id: int | None, reason: str | None
-    ) -> bool:
-        """Record a pending refund of ``charge_id`` unless one is recorded already.
-
-        One ``INSERT ... ON CONFLICT DO NOTHING`` on the unique charge id, so two copies of a
-        payment update handled at the same time record one refund. Returns whether it added one.
-        """
-        values = {
-            "telegram_payment_charge_id": charge_id,
-            "user_id": user_id,
-            "amount": amount,
-            "order_id": order_id,
-            "reason": reason,
-        }
-        insert: postgresql.Insert | sqlite.Insert
-        if self._session.get_bind().dialect.name == "postgresql":
-            insert = postgresql.insert(Refund)
-        else:
-            insert = sqlite.insert(Refund)
-        stmt = insert.values(values).on_conflict_do_nothing(
-            index_elements=["telegram_payment_charge_id"]
-        )
-        result = cast(CursorResult[Any], await self._session.execute(stmt))
-        return result.rowcount == 1
-
-    async def get(self, refund_id: int) -> Refund:
-        return await self._session.get_one(Refund, refund_id)
-
-    async def due(self, moment: datetime) -> Sequence[Refund]:
-        """Pending refunds whose next attempt is not later than ``moment``, oldest first."""
-        stmt = (
-            select(Refund)
-            .where(Refund.status == RefundStatus.PENDING, Refund.next_attempt_at <= moment)
-            .order_by(Refund.id)
-        )
         return (await self._session.execute(stmt)).scalars().all()

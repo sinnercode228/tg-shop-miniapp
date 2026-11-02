@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aiogram_stars.sqlalchemy import metadata as stars_metadata
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -32,3 +33,5 @@ async def init_models(engine: AsyncEngine) -> None:
     """Create tables if they don't exist (demo-friendly; use Alembic for real migrations)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # stars_payments and stars_refunds, where aiogram-stars keeps Stars charges and refunds.
+        await conn.run_sync(stars_metadata.create_all)

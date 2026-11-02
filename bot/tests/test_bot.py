@@ -5,124 +5,76 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from aiogram import Bot, Dispatcher
-from aiogram.client.session.base import BaseSession
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import (
     AnswerCallbackQuery,
     AnswerPreCheckoutQuery,
+    CreateInvoiceLink,
     RefundStarPayment,
+    SendInvoice,
     SendMessage,
 )
-from aiogram.methods.base import TelegramMethod, TelegramType
 from aiogram.types import Update
+from aiogram_stars import PayloadSigner, PaymentStatus, RefundPolicy, RefundStatus, StarsPayments
+from aiogram_stars.sqlalchemy import SqlAlchemyStorage
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from tgshop.bot.factory import create_dispatcher
 from tgshop.bot.keyboards import OrderAction, admin_order
 from tgshop.bot.notifier import TelegramNotifier
-from tgshop.bot.texts import money, status_update
+from tgshop.bot.texts import CHECKOUT_ERROR, money, status_update
 from tgshop.config import Settings
 from tgshop.container import build_container
-from tgshop.db.repository import RefundRepository
 from tgshop.db.session import SessionFactory, init_models
 from tgshop.domain.catalog import Catalog
-from tgshop.domain.enums import OrderSource, OrderStatus, RefundStatus
+from tgshop.domain.enums import OrderSource, OrderStatus
 from tgshop.domain.pricing import PricingRules
 from tgshop.domain.schemas import OrderCreate, OrderOut
-from tgshop.payments import TelegramStarsGateway, make_payload
+from tgshop.payments import TelegramStarsGateway, build_invoice
 from tgshop.services.expiry import UnpaidOrderExpiry
 from tgshop.services.notifier import NullNotifier
 from tgshop.services.orders import Customer, OrderService
-from tgshop.services.refunds import RefundOutbox
 
-from .conftest import BOT_TOKEN, USER_ID, Clock, FakePayments, order_payload
-
-ADMIN_ID = 900_000_001
-WEBAPP_URL = "https://sinnercode228.github.io/tg-shop-miniapp/"
-
-
-class RecordingSession(BaseSession):
-    def __init__(self) -> None:
-        super().__init__()
-        self.calls: list[TelegramMethod[Any]] = []
-        self.refusals: dict[type[TelegramMethod[Any]], str] = {}
-
-    def refuse(self, kind: type[TelegramMethod[Any]], description: str) -> None:
-        """Answer every later ``kind`` call with a Bot API 400 error."""
-        self.refusals[kind] = description
-
-    async def make_request(
-        self,
-        bot: Bot,
-        method: TelegramMethod[TelegramType],
-        timeout: int | None = None,  # noqa: ASYNC109 - aiogram signature
-    ) -> TelegramType:
-        self.calls.append(method)
-        if type(method) in self.refusals:
-            raise TelegramBadRequest(method=method, message=self.refusals[type(method)])
-        return True  # type: ignore[return-value]  # handlers ignore API results
-
-    async def stream_content(self, *args: Any, **kwargs: Any) -> AsyncGenerator[bytes, None]:
-        yield b""
-
-    async def close(self) -> None:
-        return None
-
-    def sent(self, kind: type[TelegramMethod[Any]]) -> list[Any]:
-        return [c for c in self.calls if isinstance(c, kind)]
-
-
-@pytest.fixture
-def session() -> RecordingSession:
-    return RecordingSession()
-
-
-@pytest.fixture
-def bot(session: RecordingSession) -> Bot:
-    return Bot(BOT_TOKEN, session=session)
+from .conftest import (
+    ADMIN_ID,
+    BOT_TOKEN,
+    STARS_SECRET,
+    USER_ID,
+    WEBAPP_URL,
+    Clock,
+    FakeNotifier,
+    FakePayments,
+    RecordingSession,
+    Telegram,
+    _user,
+    make_stars,
+    message_update,
+    order_payload,
+    payment_update,
+)
 
 
 @pytest.fixture
 def telegram_outbox(
-    bot: Bot, session_factory: SessionFactory, catalog: Catalog, clock: Clock
-) -> RefundOutbox:
-    """Sends refunds and their messages through ``bot``."""
-    return RefundOutbox(
+    bot: Bot, engine: AsyncEngine, session_factory: SessionFactory, catalog: Catalog, clock: Clock
+) -> StarsPayments:
+    """Sends the refunds in the shop's database, and their messages, through ``bot``."""
+    return make_stars(
+        engine,
         session_factory,
-        TelegramStarsGateway(bot),
         TelegramNotifier(bot, catalog, [ADMIN_ID]),
-        max_attempts=2,
-        clock=clock,
+        clock,
+        RefundPolicy(max_attempts=2, first_delay=timedelta(seconds=30)),
     )
 
 
-@pytest.fixture
-def dp(service: OrderService, catalog: Catalog) -> Dispatcher:
-    return create_dispatcher(
-        order_service=service, catalog=catalog, admin_ids=[ADMIN_ID], webapp_url=WEBAPP_URL
-    )
-
-
-def _user(user_id: int) -> dict[str, Any]:
-    return {"id": user_id, "is_bot": False, "first_name": "Анна", "language_code": "ru"}
-
-
-def message_update(user_id: int, **fields: Any) -> Update:
-    now = int(datetime.now(UTC).timestamp())
-    message = {
-        "message_id": 1,
-        "date": now,
-        "chat": {"id": user_id, "type": "private"},
-        "from": _user(user_id),
-        **fields,
-    }
-    return Update.model_validate({"update_id": 1, "message": message})
+async def stars_order(service: OrderService) -> OrderOut:
+    data = OrderCreate.model_validate(order_payload(paymentMethod="stars"))
+    return (await service.place_order(Customer(user_id=USER_ID), data)).order
 
 
 def command(user_id: int, text: str) -> Update:
@@ -178,8 +130,109 @@ async def test_malformed_web_app_data_is_reported(
     assert "Не получилось" in reply.text
 
 
-async def test_pre_checkout_is_validated(
+async def test_invoice_payload_is_signed_for_the_order_and_its_amount(
+    bot: Bot, session: RecordingSession, service: OrderService, stars: StarsPayments
+) -> None:
+    order = await stars_order(service)
+    gateway = TelegramStarsGateway(bot, stars)
+
+    await gateway.create_invoice_link(build_invoice(order))
+    await gateway.send_invoice(USER_ID, build_invoice(order))
+
+    [link] = session.sent(CreateInvoiceLink)
+    [message] = session.sent(SendInvoice)
+    for invoice in (link, message):
+        assert invoice.currency == "XTR"
+        assert [price.amount for price in invoice.prices] == [order.stars_amount]
+        signed_for = PayloadSigner(STARS_SECRET).verify(invoice.payload, order.stars_amount or 0)
+        assert signed_for == str(order.id)
+    assert message.chat_id == USER_ID
+
+
+async def test_pre_checkout_declines_a_payload_the_bot_did_not_sign(
     dp: Dispatcher, bot: Bot, session: RecordingSession, service: OrderService
+) -> None:
+    order = await stars_order(service)
+    # Any invoice made with the bot token could carry this payload, at any price.
+    query = {
+        "id": "q1",
+        "from": _user(USER_ID),
+        "currency": "XTR",
+        "total_amount": order.stars_amount,
+        "invoice_payload": f"order:{order.id}",
+    }
+
+    await dp.feed_update(bot, Update.model_validate({"update_id": 2, "pre_checkout_query": query}))
+
+    [answer] = session.sent(AnswerPreCheckoutQuery)
+    assert (answer.ok, answer.error_message) == (False, CHECKOUT_ERROR)
+
+
+async def test_redelivered_successful_payment_pays_the_order_once(
+    dp: Dispatcher,
+    bot: Bot,
+    session: RecordingSession,
+    service: OrderService,
+    stars: StarsPayments,
+    notifier: FakeNotifier,
+) -> None:
+    order = await stars_order(service)
+    update = payment_update(stars, order, "tg-charge-42")
+
+    await dp.feed_update(bot, update)
+    await dp.feed_update(bot, update)  # Telegram sent it again
+
+    [thanks] = session.sent(SendMessage)
+    assert thanks.text == f"Оплата получена, заказ №{order.id} передан в работу 💫"
+    assert len(notifier.placed) == 1, "admins hear about the payment once"
+    payment = await stars.get_payment("tg-charge-42")
+    assert payment is not None
+    assert (payment.status, payment.order_id) == (PaymentStatus.ACCEPTED, str(order.id))
+
+
+async def test_pre_checkout_for_a_cancelled_order_says_why(
+    dp: Dispatcher,
+    bot: Bot,
+    session: RecordingSession,
+    service: OrderService,
+    stars: StarsPayments,
+) -> None:
+    order = await service.change_status((await stars_order(service)).id, OrderStatus.CANCELLED)
+    amount = order.stars_amount or 0
+    query = {
+        "id": "q1",
+        "from": _user(USER_ID),
+        "currency": "XTR",
+        "total_amount": amount,
+        "invoice_payload": stars.make_payload(order.id, amount),
+    }
+
+    await dp.feed_update(bot, Update.model_validate({"update_id": 2, "pre_checkout_query": query}))
+
+    [answer] = session.sent(AnswerPreCheckoutQuery)
+    assert (answer.ok, answer.error_message) == (False, "Заказ уже оплачен или отменён")
+
+
+async def test_payment_stays_accepted_when_the_reply_to_the_buyer_fails(
+    telegram: Telegram, session: RecordingSession, service: OrderService
+) -> None:
+    order = await stars_order(service)
+    session.refuse(SendMessage, "Forbidden: bot was blocked by the user")
+
+    payment = await telegram.pay(order, "tg-charge-42")
+
+    assert payment.status is PaymentStatus.ACCEPTED, "nobody has to settle it by hand"
+    paid = await service.get(order.id)
+    assert paid is not None
+    assert paid.status is OrderStatus.PAID
+
+
+async def test_pre_checkout_is_validated(
+    dp: Dispatcher,
+    bot: Bot,
+    session: RecordingSession,
+    service: OrderService,
+    stars: StarsPayments,
 ) -> None:
     created = await service.place_order(
         Customer(user_id=USER_ID), OrderCreate.model_validate(order_payload(paymentMethod="stars"))
@@ -194,7 +247,7 @@ async def test_pre_checkout_is_validated(
                     "from": _user(USER_ID),
                     "currency": "XTR",
                     "total_amount": amount,
-                    "invoice_payload": make_payload(order.id),
+                    "invoice_payload": stars.make_payload(order.id, order.stars_amount or 0),
                 },
             }
         )
@@ -207,19 +260,12 @@ async def test_pre_checkout_is_validated(
 
 
 async def test_successful_payment_marks_order_paid(
-    dp: Dispatcher, bot: Bot, service: OrderService
+    dp: Dispatcher, bot: Bot, service: OrderService, stars: StarsPayments
 ) -> None:
     created = await service.place_order(
         Customer(user_id=USER_ID), OrderCreate.model_validate(order_payload(paymentMethod="stars"))
     )
-    payment = {
-        "currency": "XTR",
-        "total_amount": created.order.stars_amount,
-        "invoice_payload": make_payload(created.order.id),
-        "telegram_payment_charge_id": "tg-charge-42",
-        "provider_payment_charge_id": "",
-    }
-    await dp.feed_update(bot, message_update(USER_ID, successful_payment=payment))
+    await dp.feed_update(bot, payment_update(stars, created.order, "tg-charge-42"))
     order = await service.get(created.order.id)
     assert order is not None
     assert order.status is OrderStatus.PAID
@@ -236,24 +282,18 @@ async def test_payment_for_an_expired_order_is_refunded_and_explained(
     bot: Bot,
     session: RecordingSession,
     service: OrderService,
-    telegram_outbox: RefundOutbox,
+    stars: StarsPayments,
+    telegram_outbox: StarsPayments,
 ) -> None:
     created = await service.place_order(
         Customer(user_id=USER_ID), OrderCreate.model_validate(order_payload(paymentMethod="stars"))
     )
     await expire_unpaid_orders(service, created.order)
-    payment = {
-        "currency": "XTR",
-        "total_amount": created.order.stars_amount,
-        "invoice_payload": make_payload(created.order.id),
-        "telegram_payment_charge_id": "tg-charge-late",
-        "provider_payment_charge_id": "",
-    }
 
-    await dp.feed_update(bot, message_update(USER_ID, successful_payment=payment))
+    await dp.feed_update(bot, payment_update(stars, created.order, "tg-charge-late"))
     assert session.sent(RefundStarPayment) == [], "the outbox calls it after the commit"
     assert session.sent(SendMessage) == [], "nothing is promised before the Stars are back"
-    await telegram_outbox.run_once()
+    await telegram_outbox.send_due_refunds(bot)
 
     [refund] = session.sent(RefundStarPayment)
     assert (refund.user_id, refund.telegram_payment_charge_id) == (USER_ID, "tg-charge-late")
@@ -271,6 +311,7 @@ async def test_expired_order_is_announced_to_the_customer_and_the_admins(
     session_factory: SessionFactory,
     catalog: Catalog,
     rules: PricingRules,
+    stars: StarsPayments,
 ) -> None:
     service = OrderService(
         session_factory=session_factory,
@@ -278,6 +319,7 @@ async def test_expired_order_is_announced_to_the_customer_and_the_admins(
         rules=rules,
         notifier=TelegramNotifier(bot, catalog, [ADMIN_ID]),
         payments=FakePayments(),
+        refunds=stars,
     )
     created = await service.place_order(
         Customer(user_id=USER_ID), OrderCreate.model_validate(order_payload(paymentMethod="stars"))
@@ -299,8 +341,7 @@ async def paid_order(service: OrderService) -> OrderOut:
         Customer(user_id=USER_ID), OrderCreate.model_validate(order_payload(paymentMethod="stars"))
     )
     return await service.mark_paid(
-        payload=make_payload(created.order.id),
-        currency="XTR",
+        order_id=created.order.id,
         total_amount=created.order.stars_amount or 0,
         payer_id=USER_ID,
         charge_id="tg-charge-1",
@@ -308,13 +349,13 @@ async def paid_order(service: OrderService) -> OrderOut:
 
 
 async def test_charge_that_telegram_already_refunded_counts_as_done(
-    session: RecordingSession, service: OrderService, telegram_outbox: RefundOutbox
+    bot: Bot, session: RecordingSession, service: OrderService, telegram_outbox: StarsPayments
 ) -> None:
     refunded = await service.refund((await paid_order(service)).id)
     # An earlier attempt went through, but its answer never reached the bot.
     session.refuse(RefundStarPayment, "Bad Request: CHARGE_ALREADY_REFUNDED")
 
-    [refund] = await telegram_outbox.run_once()
+    [refund] = await telegram_outbox.send_due_refunds(bot)
 
     assert (refund.status, refund.attempts) == (RefundStatus.DONE, 1)
     [call] = session.sent(RefundStarPayment)
@@ -325,23 +366,27 @@ async def test_charge_that_telegram_already_refunded_counts_as_done(
 
 
 async def test_refund_telegram_keeps_refusing_is_handed_to_the_admins(
-    session: RecordingSession, service: OrderService, telegram_outbox: RefundOutbox, clock: Clock
+    bot: Bot,
+    session: RecordingSession,
+    service: OrderService,
+    telegram_outbox: StarsPayments,
+    clock: Clock,
 ) -> None:
     order = await service.refund((await paid_order(service)).id)
     session.refuse(RefundStarPayment, "Bad Request: CHARGE_NOT_FOUND")
 
-    [first] = await telegram_outbox.run_once()
+    [first] = await telegram_outbox.send_due_refunds(bot)
     assert first.status is RefundStatus.PENDING
     assert session.sent(SendMessage) == []
     clock.advance(seconds=30)
-    [refund] = await telegram_outbox.run_once()
+    [refund] = await telegram_outbox.send_due_refunds(bot)
 
     assert refund.status is RefundStatus.FAILED
     assert len(session.sent(RefundStarPayment)) == 2
     [to_admin] = session.sent(SendMessage)
     assert to_admin.chat_id == ADMIN_ID
     assert "Возврат звёзд не прошёл" in to_admin.text
-    assert f"Заказ №{order.id}" in to_admin.text
+    assert f"Заказ №{order.id} · {order.stars_amount} ⭐" in to_admin.text
     assert "<code>tg-charge-1</code>" in to_admin.text, "admins can find the charge"
     assert "CHARGE_NOT_FOUND" in to_admin.text
     assert f"tg://user?id={USER_ID}" in to_admin.text
@@ -352,7 +397,7 @@ async def test_admin_refund_command_records_the_refund(
     bot: Bot,
     session: RecordingSession,
     service: OrderService,
-    telegram_outbox: RefundOutbox,
+    telegram_outbox: StarsPayments,
 ) -> None:
     order = await paid_order(service)
 
@@ -369,7 +414,7 @@ async def test_admin_refund_command_records_the_refund(
     assert refunded.status is OrderStatus.REFUNDED
 
     session.calls.clear()
-    await telegram_outbox.run_once()
+    await telegram_outbox.send_due_refunds(bot)
 
     [call] = session.sent(RefundStarPayment)
     assert call.telegram_payment_charge_id == "tg-charge-1"
@@ -384,6 +429,7 @@ async def test_bot_sends_an_admin_refund_right_after_it_is_recorded(
     settings = Settings(
         _env_file=None,
         bot_token=BOT_TOKEN,
+        stars_secret=STARS_SECRET,
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'shop.db'}",
         stars_enabled=False,
         order_payment_ttl_minutes=0,
@@ -397,26 +443,28 @@ async def test_bot_sends_an_admin_refund_right_after_it_is_recorded(
         rules=container.rules,
         notifier=NullNotifier(),
         payments=FakePayments(),
+        refunds=container.stars,
     )
     order = await paid_order(paid_before)
 
-    due = RefundRepository.due
+    claim = SqlAlchemyStorage.claim_refund
     order_refunded = TelegramNotifier.order_refunded
     swept, told = asyncio.Event(), asyncio.Event()
 
-    async def due_then_signal(self: RefundRepository, moment: datetime) -> Any:
-        found = await due(self, moment)
-        swept.set()
+    async def claim_then_signal(self: SqlAlchemyStorage, **kwargs: Any) -> Any:
+        found = await claim(self, **kwargs)
+        if found is None:
+            swept.set()
         return found
 
     async def order_refunded_then_signal(self: TelegramNotifier, order: OrderOut) -> None:
         await order_refunded(self, order)
         told.set()
 
-    monkeypatch.setattr(RefundRepository, "due", due_then_signal)
+    monkeypatch.setattr(SqlAlchemyStorage, "claim_refund", claim_then_signal)
     monkeypatch.setattr(TelegramNotifier, "order_refunded", order_refunded_then_signal)
     dp = container.dispatcher()
-    await dp.emit_startup()
+    await dp.emit_startup(bot=container.bot)
     try:
         async with asyncio.timeout(5):
             await swept.wait()  # the sweep at startup, before there is anything to send

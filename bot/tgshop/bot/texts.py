@@ -39,6 +39,10 @@ PAY_SUPPORT = (
     "администратор проверит платёж и при необходимости оформит возврат."
 )
 
+# Shown in the payment sheet when the invoice payload does not verify (made without the shop's
+# secret, or for another amount) or the order could not be checked in time.
+CHECKOUT_ERROR = "Счёт устарел или не прошёл проверку. Оформите заказ заново или попробуйте позже."
+
 ADMIN_HELP = (
     "<b>Команды администратора</b>\n"
     "/orders [статус|all] — последние заказы\n"

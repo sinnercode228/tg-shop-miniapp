@@ -3,19 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from aiogram_stars import PaymentStatus
 
 from tgshop.domain.enums import OrderSource, OrderStatus, PaymentMethod
-from tgshop.domain.errors import InvalidTransition, NotFound, PaymentError, ValidationFailed
+from tgshop.domain.errors import InvalidTransition, NotFound, ValidationFailed
 from tgshop.domain.schemas import OrderCreate, OrderOut
-from tgshop.payments import make_payload
 from tgshop.services.orders import Customer, OrderService
-from tgshop.services.refunds import RefundOutbox
 
 from .conftest import (
     OTHER_USER_ID,
     USER_ID,
     FakeNotifier,
     FakePayments,
+    Telegram,
     order_payload,
     pay_concurrently,
     run_after_next_read,
@@ -131,12 +131,12 @@ async def test_stars_order_awaits_payment_and_gets_invoice(
     assert order.stars_amount == 1814  # ceil(2 720 ₽ / 1.5 ₽)
     assert created.invoice_url == f"https://t.me/$demo-invoice-{order.id}"
     assert payments.links[0].amount == 1814
-    assert payments.links[0].payload == make_payload(order.id)
+    assert payments.links[0].order_id == order.id
     assert notifier.placed == [], "admins hear about Stars orders only after payment"
 
 
 async def test_stars_disabled(
-    session_factory: Any, catalog: Any, rules: Any, notifier: FakeNotifier
+    session_factory: Any, catalog: Any, rules: Any, notifier: FakeNotifier, stars: Any
 ) -> None:
     service = OrderService(
         session_factory=session_factory,
@@ -144,6 +144,7 @@ async def test_stars_disabled(
         rules=rules,
         notifier=notifier,
         payments=None,
+        refunds=stars,
     )
     with pytest.raises(ValidationFailed) as exc_info:
         await service.create_order(CUSTOMER, build(paymentMethod="stars"), source=OrderSource.API)
@@ -151,42 +152,38 @@ async def test_stars_disabled(
 
 
 async def test_full_stars_payment_flow(
-    service: OrderService, outbox: RefundOutbox, notifier: FakeNotifier, payments: FakePayments
+    service: OrderService, telegram: Telegram, notifier: FakeNotifier
 ) -> None:
     order = (await service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
-    payload = make_payload(order.id)
     assert order.stars_amount is not None
 
-    # pre_checkout_query
+    # pre_checkout_query; aiogram-stars has checked the payload signature before this.
     assert (
         await service.pre_checkout_error(
-            payload=payload, currency="XTR", total_amount=order.stars_amount, payer_id=USER_ID
+            order_id=order.id, total_amount=order.stars_amount, payer_id=USER_ID
         )
         is None
     )
     assert (
+        await service.pre_checkout_error(order_id=order.id, total_amount=1, payer_id=USER_ID)
+        is not None
+    )
+    assert (
         await service.pre_checkout_error(
-            payload=payload, currency="XTR", total_amount=1, payer_id=USER_ID
+            order_id=order.id, total_amount=order.stars_amount, payer_id=OTHER_USER_ID
         )
         is not None
     )
     assert (
         await service.pre_checkout_error(
-            payload=payload, currency="XTR", total_amount=order.stars_amount, payer_id=OTHER_USER_ID
-        )
-        is not None
-    )
-    assert (
-        await service.pre_checkout_error(
-            payload="garbage", currency="XTR", total_amount=order.stars_amount, payer_id=USER_ID
+            order_id=999, total_amount=order.stars_amount, payer_id=USER_ID
         )
         is not None
     )
 
     # successful_payment
     paid = await service.mark_paid(
-        payload=payload,
-        currency="XTR",
+        order_id=order.id,
         total_amount=order.stars_amount,
         payer_id=USER_ID,
         charge_id="charge-1",
@@ -195,10 +192,9 @@ async def test_full_stars_payment_flow(
     assert notifier.placed == [paid]
     assert notifier.changes == [(paid, OrderStatus.AWAITING_PAYMENT)]
 
-    # Telegram may redeliver the update — must be idempotent.
+    # aiogram-stars calls on_paid again for a charge whose handler stopped past its lease.
     again = await service.mark_paid(
-        payload=payload,
-        currency="XTR",
+        order_id=order.id,
         total_amount=order.stars_amount,
         payer_id=USER_ID,
         charge_id="charge-1",
@@ -209,33 +205,28 @@ async def test_full_stars_payment_flow(
     # Refund
     refunded = await service.change_status(order.id, OrderStatus.REFUNDED)
     assert refunded.status is OrderStatus.REFUNDED
-    assert payments.refunds == [], "the outbox calls refundStarPayment after the commit"
-    await outbox.run_once()
-    assert payments.refunds == [(USER_ID, "charge-1")]
+    assert telegram.refunds == [], "the outbox calls refundStarPayment after the commit"
+    await telegram.send_refunds()
+    assert telegram.refunds == [(USER_ID, "charge-1")]
     assert [o.status for o in notifier.refunded] == [OrderStatus.REFUNDED]
 
 
 async def test_payment_for_cancelled_order_is_refunded_automatically(
-    service: OrderService, outbox: RefundOutbox, notifier: FakeNotifier, payments: FakePayments
+    service: OrderService, telegram: Telegram, notifier: FakeNotifier
 ) -> None:
     order = (await service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
     await service.change_status(order.id, OrderStatus.CANCELLED)
 
-    with pytest.raises(PaymentError):
-        await service.mark_paid(
-            payload=make_payload(order.id),
-            currency="XTR",
-            total_amount=order.stars_amount or 0,
-            payer_id=USER_ID,
-            charge_id="late-charge",
-        )
-    await outbox.run_once()
-    assert payments.refunds == [(USER_ID, "late-charge")]
+    payment = await telegram.pay(order, "late-charge")
+
+    assert payment.status is PaymentStatus.REJECTED
+    await telegram.send_refunds()
+    assert telegram.refunds == [(USER_ID, "late-charge")]
     assert notifier.returned == [(USER_ID, "Заказ уже оплачен или отменён")]
 
 
 async def test_concurrent_updates_for_one_charge_record_it_once(
-    file_service: OrderService, notifier: FakeNotifier, payments: FakePayments
+    file_service: OrderService, notifier: FakeNotifier
 ) -> None:
     order = (await file_service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
 
@@ -245,74 +236,63 @@ async def test_concurrent_updates_for_one_charge_record_it_once(
     stored = await file_service.get_for_user(USER_ID, order.id)
     assert [e.status for e in stored.events] == [OrderStatus.AWAITING_PAYMENT, OrderStatus.PAID]
     assert len(notifier.placed) == 1, "admins hear about the payment once"
-    assert payments.refunds == []
 
 
 async def test_concurrent_payments_with_different_charges_refund_one(
-    file_service: OrderService,
-    file_outbox: RefundOutbox,
-    notifier: FakeNotifier,
-    payments: FakePayments,
+    file_service: OrderService, file_telegram: Telegram, notifier: FakeNotifier
 ) -> None:
     order = (await file_service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
 
-    results = await pay_concurrently(file_service, order, "charge-a", "charge-b")
+    recorded = await file_telegram.pay_concurrently(order, "charge-a", "charge-b")
 
-    paid = [r for r in results if isinstance(r, OrderOut)]
-    rejected = [r for r in results if isinstance(r, PaymentError)]
-    assert len(paid) == 1
-    assert len(rejected) == 1
+    assert sorted(p.status for p in recorded) == [PaymentStatus.ACCEPTED, PaymentStatus.REJECTED]
     stored = await file_service.get_for_user(USER_ID, order.id)
     assert [e.status for e in stored.events] == [OrderStatus.AWAITING_PAYMENT, OrderStatus.PAID]
     assert len(notifier.placed) == 1
-    await file_outbox.run_once()
-    assert len(payments.refunds) == 1, "the losing charge goes back"
+    await file_telegram.send_refunds()
+    assert len(file_telegram.refunds) == 1, "the losing charge goes back"
     # The winning charge id is on the order, so /refund reaches the other one.
     await file_service.refund(order.id)
-    await file_outbox.run_once()
-    assert sorted(charge for _, charge in payments.refunds) == ["charge-a", "charge-b"]
+    await file_telegram.send_refunds()
+    assert sorted(charge for _, charge in file_telegram.refunds) == ["charge-a", "charge-b"]
 
 
 async def test_payment_between_cancel_read_and_write_keeps_the_order_paid(
-    file_service: OrderService, payments: FakePayments, monkeypatch: pytest.MonkeyPatch
+    file_service: OrderService, file_telegram: Telegram, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     order = (await file_service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
-    paid = run_after_next_read(monkeypatch, pay_concurrently(file_service, order, "charge-1"))
+    paid = run_after_next_read(monkeypatch, file_telegram.pay(order, "charge-1"))
 
     with pytest.raises(InvalidTransition):
         await file_service.change_status(order.id, OrderStatus.CANCELLED)
 
     assert len(paid) == 1, "the payment went through while the cancel was running"
+    payment = await file_telegram.stars.get_payment("charge-1")
+    assert payment is not None
+    assert payment.status is PaymentStatus.ACCEPTED
     stored = await file_service.get_for_user(USER_ID, order.id)
     assert [e.status for e in stored.events] == [OrderStatus.AWAITING_PAYMENT, OrderStatus.PAID]
-    assert payments.refunds == [], "the order is paid, so /refund can still return the Stars"
+    assert await file_telegram.send_refunds() == [], (
+        "the order is paid, so /refund can still return the Stars"
+    )
 
 
 async def test_cancel_between_payment_read_and_write_refunds_the_payment(
-    file_service: OrderService,
-    file_outbox: RefundOutbox,
-    payments: FakePayments,
-    monkeypatch: pytest.MonkeyPatch,
+    file_service: OrderService, file_telegram: Telegram, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     order = (await file_service.place_order(CUSTOMER, build(paymentMethod="stars"))).order
     run_after_next_read(monkeypatch, file_service.change_status(order.id, OrderStatus.CANCELLED))
 
-    with pytest.raises(PaymentError):
-        await file_service.mark_paid(
-            payload=make_payload(order.id),
-            currency="XTR",
-            total_amount=order.stars_amount or 0,
-            payer_id=USER_ID,
-            charge_id="charge-1",
-        )
+    payment = await file_telegram.pay(order, "charge-1")
 
+    assert payment.status is PaymentStatus.REJECTED
     stored = await file_service.get_for_user(USER_ID, order.id)
     assert [e.status for e in stored.events] == [
         OrderStatus.AWAITING_PAYMENT,
         OrderStatus.CANCELLED,
     ]
-    await file_outbox.run_once()
-    assert payments.refunds == [(USER_ID, "charge-1")]
+    await file_telegram.send_refunds()
+    assert file_telegram.refunds == [(USER_ID, "charge-1")]
 
 
 async def test_status_changes_notify_customer(

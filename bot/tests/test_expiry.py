@@ -6,26 +6,24 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from aiogram_stars import PaymentStatus
 from pydantic import ValidationError
 
 from tgshop.config import Settings
 from tgshop.container import build_container
 from tgshop.db.session import init_models
 from tgshop.domain.enums import OrderSource, OrderStatus
-from tgshop.domain.errors import PaymentError
 from tgshop.domain.schemas import OrderCreate, OrderOut
-from tgshop.payments import make_payload
 from tgshop.services.expiry import UnpaidOrderExpiry
 from tgshop.services.orders import Customer, OrderService
-from tgshop.services.refunds import RefundOutbox
 
 from .conftest import (
     BOT_TOKEN,
+    STARS_SECRET,
     USER_ID,
     FakeNotifier,
-    FakePayments,
+    Telegram,
     order_payload,
-    pay_concurrently,
     run_after_next_read,
 )
 
@@ -44,8 +42,7 @@ async def place_stars_order(service: OrderService) -> OrderOut:
 
 async def pay(service: OrderService, order: OrderOut, charge_id: str) -> OrderOut:
     return await service.mark_paid(
-        payload=make_payload(order.id),
-        currency="XTR",
+        order_id=order.id,
         total_amount=order.stars_amount or 0,
         payer_id=USER_ID,
         charge_id=charge_id,
@@ -70,7 +67,7 @@ async def test_unpaid_order_is_kept_until_the_ttl_has_passed(
 
 
 async def test_unpaid_order_is_cancelled_after_the_ttl(
-    service: OrderService, notifier: FakeNotifier, payments: FakePayments
+    service: OrderService, notifier: FakeNotifier, telegram: Telegram
 ) -> None:
     order = await place_stars_order(service)
     paid = await pay(service, await place_stars_order(service), "charge-1")
@@ -94,32 +91,29 @@ async def test_unpaid_order_is_cancelled_after_the_ttl(
         "the customer gets the same status message as after a manual cancel"
     )
     assert notifier.expired == [expired], "admins hear about it"
-    assert payments.refunds == []
+    assert await telegram.send_refunds() == []
     assert await expiry_at(service, later + TTL).run_once() == [], "an order expires once"
 
 
 async def test_payment_for_an_expired_order_is_refunded(
-    service: OrderService, outbox: RefundOutbox, notifier: FakeNotifier, payments: FakePayments
+    service: OrderService, telegram: Telegram, notifier: FakeNotifier
 ) -> None:
     order = await place_stars_order(service)
     await expiry_at(service, order.created_at + 2 * TTL).run_once()
 
     assert (
         await service.pre_checkout_error(
-            payload=make_payload(order.id),
-            currency="XTR",
-            total_amount=order.stars_amount or 0,
-            payer_id=USER_ID,
+            order_id=order.id, total_amount=order.stars_amount or 0, payer_id=USER_ID
         )
         == "Заказ уже оплачен или отменён"
     )
-    with pytest.raises(PaymentError):
-        await pay(service, order, "late-charge")
-    assert payments.refunds == [], "the refund is recorded, the outbox sends it"
-    [refund] = await outbox.run_once()
+    payment = await telegram.pay(order, "late-charge")
+    assert (payment.status, payment.order_id) == (PaymentStatus.REJECTED, str(order.id))
+    assert telegram.refunds == [], "the refund is recorded, the outbox sends it"
+    [refund] = await telegram.send_refunds()
 
-    assert (refund.order_id, refund.charge_id) == (order.id, "late-charge")
-    assert payments.refunds == [(USER_ID, "late-charge")]
+    assert refund.charge_id == "late-charge"
+    assert telegram.refunds == [(USER_ID, "late-charge")]
     assert notifier.returned == [(USER_ID, "Заказ уже оплачен или отменён")]
     assert await stored_statuses(service, order) == [
         OrderStatus.AWAITING_PAYMENT,
@@ -130,12 +124,12 @@ async def test_payment_for_an_expired_order_is_refunded(
 
 async def test_payment_between_expiry_read_and_write_keeps_the_order_paid(
     file_service: OrderService,
+    file_telegram: Telegram,
     notifier: FakeNotifier,
-    payments: FakePayments,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     order = await place_stars_order(file_service)
-    paid = run_after_next_read(monkeypatch, pay_concurrently(file_service, order, "charge-1"))
+    paid = run_after_next_read(monkeypatch, file_telegram.pay(order, "charge-1"))
 
     assert await expiry_at(file_service, order.created_at + 2 * TTL).run_once() == []
 
@@ -144,7 +138,7 @@ async def test_payment_between_expiry_read_and_write_keeps_the_order_paid(
         OrderStatus.AWAITING_PAYMENT,
         OrderStatus.PAID,
     ]
-    assert payments.refunds == []
+    assert await file_telegram.send_refunds() == []
     assert notifier.expired == []
     assert [previous for _, previous in notifier.changes] == [OrderStatus.AWAITING_PAYMENT]
     assert len(notifier.placed) == 1
@@ -152,23 +146,23 @@ async def test_payment_between_expiry_read_and_write_keeps_the_order_paid(
 
 async def test_expiry_between_payment_read_and_write_refunds_the_payment(
     file_service: OrderService,
-    file_outbox: RefundOutbox,
+    file_telegram: Telegram,
     notifier: FakeNotifier,
-    payments: FakePayments,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     order = await place_stars_order(file_service)
     run_after_next_read(monkeypatch, expiry_at(file_service, order.created_at + 2 * TTL).run_once())
 
-    with pytest.raises(PaymentError):
-        await pay(file_service, order, "charge-1")
+    payment = await file_telegram.pay(order, "charge-1")
+
+    assert payment.status is PaymentStatus.REJECTED
 
     assert await stored_statuses(file_service, order) == [
         OrderStatus.AWAITING_PAYMENT,
         OrderStatus.CANCELLED,
     ]
-    await file_outbox.run_once()
-    assert payments.refunds == [(USER_ID, "charge-1")]
+    await file_telegram.send_refunds()
+    assert file_telegram.refunds == [(USER_ID, "charge-1")]
     assert [o.id for o in notifier.expired] == [order.id]
     assert notifier.placed == []
 
@@ -213,6 +207,7 @@ def settings(**overrides: Any) -> Settings:
     return Settings(
         _env_file=None,
         bot_token=BOT_TOKEN,
+        stars_secret=STARS_SECRET,
         database_url="sqlite+aiosqlite:///:memory:",
         **overrides,
     )
@@ -247,7 +242,7 @@ async def test_bot_runs_the_expiry_while_it_polls() -> None:
         assert expiry.ttl == timedelta(minutes=45)
 
         dp = container.dispatcher()
-        await dp.emit_startup()
+        await dp.emit_startup(bot=container.bot)
         assert expiry.running
         await dp.emit_shutdown()
         assert not expiry.running

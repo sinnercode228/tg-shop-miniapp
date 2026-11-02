@@ -5,7 +5,7 @@ aiogram 3 bot + FastAPI backend of the Zernolist Mini App demo. See the reposito
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env   # set BOT_TOKEN
+cp .env.example .env   # set BOT_TOKEN and STARS_SECRET
 python -m tgshop --mode all   # bot (long polling) + API on :8080
 pytest && ruff check . && mypy
 ```

@@ -4,12 +4,12 @@ notifications meet — transports (REST API, bot updates) stay thin."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
 from tgshop.db.models import Order, OrderItem
-from tgshop.db.repository import OrderRepository, RefundRepository
+from tgshop.db.repository import OrderRepository
 from tgshop.db.session import SessionFactory
 from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import DeliveryMethod, OrderSource, OrderStatus, PaymentMethod
@@ -24,7 +24,7 @@ from tgshop.domain.schemas import (
     QuoteRequest,
 )
 from tgshop.domain.status import ensure_transition
-from tgshop.payments import PaymentGateway, build_invoice, check_payment, parse_payload
+from tgshop.payments import PaymentGateway, RefundQueue, build_invoice, check_payment
 
 from .notifier import Notifier
 
@@ -62,15 +62,14 @@ class OrderService:
         rules: PricingRules,
         notifier: Notifier,
         payments: PaymentGateway | None,
-        refund_recorded: Callable[[], None] | None = None,
+        refunds: RefundQueue,
     ) -> None:
         self._sessions = session_factory
         self._catalog = catalog
         self._rules = rules
         self._notifier = notifier
         self._payments = payments
-        # Called after a commit that recorded a refund; RefundOutbox.wake sends it right away.
-        self._refund_recorded = refund_recorded or (lambda: None)
+        self._refunds = refunds
 
     @property
     def stars_enabled(self) -> bool:
@@ -256,35 +255,29 @@ class OrderService:
         return dto
 
     async def pre_checkout_error(
-        self, *, payload: str, currency: str, total_amount: int, payer_id: int
+        self, *, order_id: int, total_amount: int, payer_id: int
     ) -> str | None:
-        order_id = parse_payload(payload)
-        order = await self.get(order_id) if order_id is not None else None
-        return check_payment(order, currency=currency, total_amount=total_amount, payer_id=payer_id)
+        return check_payment(await self.get(order_id), total_amount=total_amount, payer_id=payer_id)
 
     async def mark_paid(
-        self, *, payload: str, currency: str, total_amount: int, payer_id: int, charge_id: str
+        self, *, order_id: int, total_amount: int, payer_id: int, charge_id: str
     ) -> OrderOut:
-        order_id = parse_payload(payload)
-        if order_id is None:
-            raise PaymentError(f"Unexpected invoice payload {payload!r}")
-
-        claimed = recorded = False
+        """Set ``paid`` for a Stars charge. If the order cannot take it, raise ``PaymentError``
+        with the reason; the bot then has aiogram-stars refund the charge."""
+        dto: OrderOut | None = None
         async with self._sessions() as session, session.begin():
             orders = OrderRepository(session)
             order = await orders.get(order_id, for_update=True)
             if order is not None and order.telegram_payment_charge_id == charge_id:
-                return _to_dto(order)  # duplicated update — already processed
+                # Already paid with this charge: aiogram-stars calls on_paid again for a charge
+                # whose handler stopped before it finished.
+                return _to_dto(order)
             error = check_payment(
-                _to_dto(order) if order else None,
-                currency=currency,
-                total_amount=total_amount,
-                payer_id=payer_id,
+                _to_dto(order) if order else None, total_amount=total_amount, payer_id=payer_id
             )
             if error is None and order is not None:
                 previous = order.status
-                claimed = await orders.claim_payment(order.id, charge_id)
-                if claimed:
+                if await orders.claim_payment(order.id, charge_id):
                     order.set_status(OrderStatus.PAID)  # the row is updated; adds the event
                     await session.flush()
                     dto = _to_dto(order)
@@ -293,40 +286,22 @@ class OrderService:
                     # (on SQLite that read takes no lock). See what it wrote.
                     await session.refresh(order)
                     if order.telegram_payment_charge_id == charge_id:
-                        return _to_dto(order)  # the same update, handled concurrently
+                        return _to_dto(order)  # the same charge, handled concurrently
                     error = check_payment(
-                        _to_dto(order),
-                        currency=currency,
-                        total_amount=total_amount,
-                        payer_id=payer_id,
+                        _to_dto(order), total_amount=total_amount, payer_id=payer_id
                     )
-            if not claimed:
-                # Money was taken but the order can't accept it (e.g. cancelled meanwhile).
-                # The refund is committed before this update is done with; RefundOutbox sends
-                # it. A redelivered update finds it recorded and adds nothing.
-                log.warning(
-                    "refunding orphan payment %s for order %s: %s", charge_id, order_id, error
-                )
-                recorded = await RefundRepository(session).add(
-                    charge_id=charge_id,
-                    user_id=payer_id,
-                    amount=total_amount,
-                    order_id=order.id if order is not None else None,
-                    reason=error or "Заказ не найден",
-                )
 
-        if not claimed:
-            if recorded:
-                self._refund_recorded()
-            raise PaymentError(error or "Order not found")
+        if dto is None:
+            # Money was taken but the order can't accept it (e.g. cancelled meanwhile).
+            raise PaymentError(error or "Заказ не найден")
 
         await self._notifier.order_placed(dto)
         await self._notifier.status_changed(dto, previous)
         return dto
 
     async def refund(self, order_id: int) -> OrderOut:
-        """Set ``refunded`` and record the refund in one transaction. RefundOutbox calls
-        ``refundStarPayment`` after the commit and tells the customer once it goes through."""
+        """Set ``refunded``, then queue the refund with aiogram-stars, which calls
+        ``refundStarPayment`` and tells the customer once it goes through."""
         async with self._sessions() as session, session.begin():
             orders = OrderRepository(session)
             order = await orders.get(order_id, for_update=True)
@@ -347,16 +322,11 @@ class OrderService:
                 await session.refresh(order)
                 raise InvalidTransition(f"Order {order_id} is now '{order.status}'")
             order.set_status(OrderStatus.REFUNDED)  # the row is updated; adds the event
-            await RefundRepository(session).add(
-                charge_id=charge_id,
-                user_id=order.user_id,
-                amount=order.stars_amount or 0,
-                order_id=order.id,
-                reason=None,
-            )
             await session.flush()
             dto = _to_dto(order)
-        self._refund_recorded()
+        # After the commit, so a failed commit queues nothing. A charge taken before
+        # aiogram-stars handled payments is not in its records, hence user_id.
+        await self._refunds.refund(charge_id, user_id=dto.user_id)
         return dto
 
     async def expire_unpaid(self, *, placed_before: datetime) -> list[OrderOut]:
