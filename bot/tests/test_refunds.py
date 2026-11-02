@@ -327,6 +327,28 @@ async def test_refunds_still_pending_in_the_old_refunds_table_are_queued(
     assert len(telegram.refunds) == 2
 
 
+async def test_old_refund_that_could_not_be_queued_is_queued_at_the_next_start(
+    engine: AsyncEngine,
+    telegram: Telegram,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await add_old_refunds(
+        engine, (None, "charge-1", "test", "pending"), (None, "charge-2", "test", "pending")
+    )
+    add_refund_fails_once(monkeypatch)
+
+    with caplog.at_level(logging.ERROR, logger="tgshop"):
+        first = await queue_old_refunds(engine, telegram.stars)
+    assert [r.charge_id for r in first] == ["charge-2"], "one failure does not stop the rest"
+    assert "database is locked" in caplog.text
+
+    again = await queue_old_refunds(engine, telegram.stars)
+    await telegram.send_refunds()
+    assert [r.charge_id for r in again] == ["charge-1", "charge-2"]
+    assert sorted(telegram.refunds) == [(USER_ID, "charge-1"), (USER_ID, "charge-2")]
+
+
 async def test_no_old_refunds_table_queues_nothing(engine: AsyncEngine, telegram: Telegram) -> None:
     assert await queue_old_refunds(engine, telegram.stars) == []
 
