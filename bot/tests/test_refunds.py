@@ -16,7 +16,9 @@ from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+import tgshop.container
 from tgshop.bot.factory import create_dispatcher
+from tgshop.bot.handlers.payments import create_stars
 from tgshop.config import Settings
 from tgshop.container import build_container, refund_policy
 from tgshop.db.session import SessionFactory, init_models
@@ -405,13 +407,22 @@ async def test_refund_with_the_longest_retry_settings_still_ends_failed(
     assert [(r.charge_id, r.attempts) for r in notifier.failed_refunds] == [("charge-1", 20)]
 
 
-async def test_bot_sends_refunds_while_it_polls() -> None:
+async def test_bot_sends_refunds_while_it_polls(monkeypatch: pytest.MonkeyPatch) -> None:
+    policies: list[RefundPolicy] = []
+
+    def create_stars_and_keep_policy(*args: Any, refunds: RefundPolicy, **kwargs: Any) -> Any:
+        policies.append(refunds)
+        return create_stars(*args, refunds=refunds, **kwargs)
+
+    monkeypatch.setattr(tgshop.container, "create_stars", create_stars_and_keep_policy)
     container = build_container(settings(refund_max_attempts=4, refund_retry_seconds=5))
     await init_models(container.engine)
     try:
-        policy = refund_policy(container.settings)
-        assert policy.max_attempts == 4
-        assert policy.first_delay == timedelta(seconds=5)
+        assert policies == [
+            RefundPolicy(
+                max_attempts=4, first_delay=timedelta(seconds=5), max_delay=timedelta(seconds=40)
+            )
+        ], "REFUND_* reach aiogram-stars"
 
         dp = container.dispatcher()
         await dp.emit_startup(bot=container.bot)
