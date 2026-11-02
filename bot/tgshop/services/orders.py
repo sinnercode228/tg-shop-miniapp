@@ -301,30 +301,39 @@ class OrderService:
 
     async def refund(self, order_id: int) -> OrderOut:
         """Set ``refunded``, then queue the refund with aiogram-stars, which calls
-        ``refundStarPayment`` and tells the customer once it goes through."""
+        ``refundStarPayment`` and tells the customer once it goes through.
+
+        For an order that is ``refunded`` already with no refund queued, which is what a failed
+        queueing leaves, queue the refund."""
         async with self._sessions() as session, session.begin():
             orders = OrderRepository(session)
             order = await orders.get(order_id, for_update=True)
             if order is None:
                 raise NotFound(f"Order {order_id} not found")
             previous = order.status
-            ensure_transition(
-                previous,
-                OrderStatus.REFUNDED,
-                delivery=order.delivery_method,
-                payment=order.payment_method,
-            )
             charge_id = order.telegram_payment_charge_id
+            refunded_before = previous is OrderStatus.REFUNDED and charge_id is not None
+            if not refunded_before:
+                ensure_transition(
+                    previous,
+                    OrderStatus.REFUNDED,
+                    delivery=order.delivery_method,
+                    payment=order.payment_method,
+                )
             if not charge_id:
                 raise PaymentError("Order has no captured payment", code="not_refundable")
-            if not await orders.move_status(order.id, previous, OrderStatus.REFUNDED):
-                # Another admin changed the order after the read above; see change_status.
-                await session.refresh(order)
-                raise InvalidTransition(f"Order {order_id} is now '{order.status}'")
-            order.set_status(OrderStatus.REFUNDED)  # the row is updated; adds the event
-            await session.flush()
+            if not refunded_before:
+                if not await orders.move_status(order.id, previous, OrderStatus.REFUNDED):
+                    # Another admin changed the order after the read above; see change_status.
+                    await session.refresh(order)
+                    raise InvalidTransition(f"Order {order_id} is now '{order.status}'")
+                order.set_status(OrderStatus.REFUNDED)  # the row is updated; adds the event
+                await session.flush()
             dto = _to_dto(order)
-        # After the commit, so a failed commit queues nothing. A charge taken before
+        if refunded_before and await self._refunds.get_refund(charge_id) is not None:
+            raise InvalidTransition(f"Order {order_id} is refunded already")
+        # After the commit, so a failed commit queues nothing. If this fails, the order stays
+        # refunded with nothing queued, and the next call queues it. A charge taken before
         # aiogram-stars handled payments is not in its records, hence user_id.
         await self._refunds.refund(charge_id, user_id=dto.user_id)
         return dto

@@ -19,6 +19,7 @@ from aiogram.methods.base import TelegramMethod, TelegramType
 from aiogram.types import Update
 from aiogram_stars import Payment, Refund, RefundPolicy, StarsPayments
 from aiogram_stars.sqlalchemy import SqlAlchemyStorage
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tgshop.api.app import create_app
@@ -486,3 +487,18 @@ def run_after_next_read(
 
     monkeypatch.setattr(OrderRepository, "get", read_then_run)
     return results
+
+
+def add_refund_fails_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the next refund aiogram-stars queues fail, as a locked SQLite database does."""
+    add_refund = SqlAlchemyStorage.add_refund
+    calls = 0
+
+    async def locked_once(self: SqlAlchemyStorage, refund: Refund) -> Refund:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OperationalError("INSERT INTO stars_refunds", {}, Exception("database is locked"))
+        return await add_refund(self, refund)
+
+    monkeypatch.setattr(SqlAlchemyStorage, "add_refund", locked_once)

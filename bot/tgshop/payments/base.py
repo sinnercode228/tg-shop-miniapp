@@ -29,3 +29,7 @@ class RefundQueue(Protocol):
     ) -> object:
         """Store a refund of the charge to ``user_id``; it is sent in the background."""
         ...
+
+    async def get_refund(self, charge_id: str) -> object | None:
+        """Return the stored refund of the charge, or ``None`` if none is stored."""
+        ...

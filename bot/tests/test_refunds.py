@@ -39,6 +39,7 @@ from .conftest import (
     FakePayments,
     RecordingSession,
     Telegram,
+    add_refund_fails_once,
     make_stars,
     order_payload,
     run_after_next_read,
@@ -145,7 +146,7 @@ async def test_refund_that_keeps_failing_ends_failed_and_tells_the_admins(
     assert telegram.refunds == []
 
 
-async def test_refund_is_recorded_with_the_status_change_or_not_at_all(
+async def test_failed_commit_leaves_the_order_paid_and_queues_no_refund(
     service: OrderService,
     engine: AsyncEngine,
     telegram: Telegram,
@@ -171,6 +172,28 @@ async def test_refund_is_recorded_with_the_status_change_or_not_at_all(
     assert refunded.status is OrderStatus.REFUNDED
     assert (refund.charge_id, refund.status) == ("charge-1", RefundStatus.DONE)
     assert telegram.refunds == [(USER_ID, "charge-1")]
+
+
+async def test_refund_that_could_not_be_queued_is_queued_by_the_next_refund(
+    service: OrderService, telegram: Telegram, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order = await pay(service, await stars_order(service), "charge-1")
+    add_refund_fails_once(monkeypatch)
+
+    with pytest.raises(OperationalError):
+        await service.refund(order.id)
+    assert (await service.get_for_user(USER_ID, order.id)).status is OrderStatus.REFUNDED
+    assert await telegram.send_refunds() == [], "the status went in, the refund did not"
+
+    refunded = await service.refund(order.id)
+    [refund] = await telegram.send_refunds()
+
+    assert refunded.status is OrderStatus.REFUNDED
+    assert [e.status for e in refunded.events].count(OrderStatus.REFUNDED) == 1
+    assert (refund.charge_id, refund.status) == ("charge-1", RefundStatus.DONE)
+    assert telegram.refunds == [(USER_ID, "charge-1")]
+    with pytest.raises(InvalidTransition):
+        await service.refund(order.id)  # the refund is queued now
 
 
 async def test_redelivered_payment_update_records_one_refund(

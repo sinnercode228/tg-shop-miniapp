@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,13 @@ from aiogram.methods import (
     SendMessage,
 )
 from aiogram.types import Update
-from aiogram_stars import PayloadSigner, PaymentStatus, RefundPolicy, RefundStatus, StarsPayments
+from aiogram_stars import (
+    PayloadSigner,
+    PaymentStatus,
+    RefundPolicy,
+    RefundStatus,
+    StarsPayments,
+)
 from aiogram_stars.sqlalchemy import SqlAlchemyStorage
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -51,6 +58,7 @@ from .conftest import (
     RecordingSession,
     Telegram,
     _user,
+    add_refund_fails_once,
     make_stars,
     message_update,
     order_payload,
@@ -420,6 +428,66 @@ async def test_admin_refund_command_records_the_refund(
     assert call.telegram_payment_charge_id == "tg-charge-1"
     [to_customer] = session.sent(SendMessage)
     assert (to_customer.chat_id, to_customer.text) == (USER_ID, status_update(refunded))
+
+
+async def test_admin_is_told_when_a_refund_could_not_be_queued(
+    dp: Dispatcher,
+    bot: Bot,
+    session: RecordingSession,
+    service: OrderService,
+    telegram_outbox: StarsPayments,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    order = await paid_order(service)
+    add_refund_fails_once(monkeypatch)
+
+    with caplog.at_level(logging.ERROR, logger="tgshop"):
+        await dp.feed_update(bot, command(ADMIN_ID, f"/refund {order.id}"))
+    [failed] = session.sent(SendMessage)
+    assert failed.text == (
+        f"Возврат по заказу №{order.id} не поставлен в очередь из-за ошибки. "
+        f"Повторите /refund {order.id}."
+    )
+    assert "database is locked" in caplog.text
+
+    await dp.feed_update(bot, command(ADMIN_ID, f"/refund {order.id}"))
+    accepted = session.sent(SendMessage)[-1]
+    assert accepted.text.startswith(f"Возврат по заказу №{order.id} оформлен")
+    await telegram_outbox.send_due_refunds(bot)
+    [call] = session.sent(RefundStarPayment)
+    assert call.telegram_payment_charge_id == "tg-charge-1"
+
+
+async def test_admin_button_says_so_when_a_refund_could_not_be_queued(
+    dp: Dispatcher,
+    bot: Bot,
+    session: RecordingSession,
+    service: OrderService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order = await paid_order(service)
+    add_refund_fails_once(monkeypatch)
+    data = OrderAction(order_id=order.id, status=OrderStatus.REFUNDED).pack()
+    update = Update.model_validate(
+        {
+            "update_id": 3,
+            "callback_query": {
+                "id": "cb1",
+                "from": _user(ADMIN_ID),
+                "chat_instance": "ci",
+                "data": data,
+            },
+        }
+    )
+
+    await dp.feed_update(bot, update)
+
+    [answer] = session.sent(AnswerCallbackQuery)
+    assert answer.show_alert is True
+    assert (
+        answer.text == f"Возврат не поставлен в очередь из-за ошибки. Повторите /refund {order.id}."
+    )
 
 
 async def test_bot_sends_an_admin_refund_right_after_it_is_recorded(

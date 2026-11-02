@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InaccessibleMessage, Message
@@ -11,6 +13,8 @@ from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import OrderStatus
 from tgshop.domain.errors import DomainError
 from tgshop.services.orders import OrderService
+
+log = logging.getLogger(__name__)
 
 ACTIVE = (
     OrderStatus.NEW,
@@ -89,10 +93,19 @@ async def refund(message: Message, command: CommandObject, order_service: OrderS
     if not arg.isdecimal():
         await message.answer("Использование: /refund <id>")
         return
+    order_id = int(arg)
     try:
-        order = await order_service.refund(int(arg))
+        order = await order_service.refund(order_id)
     except DomainError as exc:
         await message.answer(f"Возврат не выполнен: {exc.message}")
+        return
+    except Exception:
+        # The order may be refunded already with nothing queued; another /refund queues it.
+        log.exception("refund of order %s failed", order_id)
+        await message.answer(
+            f"Возврат по заказу №{order_id} не поставлен в очередь из-за ошибки. "
+            f"Повторите /refund {order_id}."
+        )
         return
     await message.answer(
         f"Возврат по заказу №{order.id} оформлен: бот вернёт звёзды покупателю. "
@@ -110,6 +123,16 @@ async def on_order_action(
         order = await order_service.change_status(callback_data.order_id, callback_data.status)
     except DomainError as exc:
         await query.answer(exc.message, show_alert=True)
+        return
+    except Exception:
+        if callback_data.status is not OrderStatus.REFUNDED:
+            raise
+        log.exception("refund of order %s failed", callback_data.order_id)
+        await query.answer(
+            "Возврат не поставлен в очередь из-за ошибки. "
+            f"Повторите /refund {callback_data.order_id}.",
+            show_alert=True,
+        )
         return
     await query.answer(texts.STATUS_LABELS[order.status])
     if query.message is not None and not isinstance(query.message, InaccessibleMessage):
