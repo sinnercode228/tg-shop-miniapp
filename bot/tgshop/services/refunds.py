@@ -18,6 +18,10 @@ from tgshop.domain.schemas import OrderOut
 
 from .notifier import Notifier
 
+# What the customer reads about a payment whose invoice payload did not verify. aiogram-stars
+# gives its own reason, in English, and leaves the payment's order id empty.
+UNVERIFIED_INVOICE = "Счёт не прошёл проверку"
+
 
 @dataclass(frozen=True, slots=True)
 class RefundOut:
@@ -44,7 +48,10 @@ class RefundNotices:
     async def refunded(self, refund: Refund) -> None:
         if refund.reason is not None:
             # A payment the order could not take, e.g. one for an order cancelled meanwhile.
-            await self._notifier.payment_returned(refund.user_id, refund.reason)
+            payment = await self._storage.get_payment(refund.charge_id)
+            unverified = payment is not None and not payment.order_id
+            reason = UNVERIFIED_INVOICE if unverified else refund.reason
+            await self._notifier.payment_returned(refund.user_id, reason)
             return
         async with self._sessions() as session:
             order = await OrderRepository(session).get_by_charge(refund.charge_id)

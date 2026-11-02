@@ -313,6 +313,35 @@ async def test_payment_for_an_expired_order_is_refunded_and_explained(
     assert order.status is OrderStatus.CANCELLED
 
 
+async def test_payment_whose_payload_did_not_verify_is_refunded_and_explained_in_russian(
+    dp: Dispatcher,
+    bot: Bot,
+    session: RecordingSession,
+    service: OrderService,
+    stars: StarsPayments,
+    telegram_outbox: StarsPayments,
+) -> None:
+    order = await stars_order(service)
+    amount = order.stars_amount or 0
+    # Signed with another secret, e.g. an invoice sent before STARS_SECRET was changed.
+    payload = PayloadSigner("an-earlier-secret-of-this-bot").sign(order.id, amount)
+    payment = {
+        "currency": "XTR",
+        "total_amount": amount,
+        "invoice_payload": payload,
+        "telegram_payment_charge_id": "tg-charge-unsigned",
+        "provider_payment_charge_id": "",
+    }
+
+    await dp.feed_update(bot, message_update(USER_ID, successful_payment=payment))
+    await telegram_outbox.send_due_refunds(bot)
+
+    [refund] = session.sent(RefundStarPayment)
+    assert refund.telegram_payment_charge_id == "tg-charge-unsigned"
+    [reply] = session.sent(SendMessage)
+    assert reply.text == "Платёж не принят (Счёт не прошёл проверку). Звёзды возвращены."
+
+
 async def test_expired_order_is_announced_to_the_customer_and_the_admins(
     bot: Bot,
     session: RecordingSession,
