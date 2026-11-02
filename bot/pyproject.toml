@@ -12,6 +12,7 @@ requires-python = ">=3.12"
 authors = [{ name = "sinnercode228" }]
 dependencies = [
   "aiogram>=3.20,<4",
+  "aiogram-stars>=0.2.0,<0.3",
   "fastapi>=0.115",
   "uvicorn>=0.32",
   "sqlalchemy[asyncio]>=2.0.36",
