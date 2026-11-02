@@ -7,9 +7,12 @@ outbox, with retries. It calls :meth:`RefundNotices.refunded` once the Stars are
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
-from aiogram_stars import Refund, RefundStatus, Storage
+from aiogram_stars import Refund, RefundStatus, StarsPayments, Storage
+from sqlalchemy import inspect, text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tgshop.db.models import Order
 from tgshop.db.repository import OrderRepository
@@ -17,6 +20,8 @@ from tgshop.db.session import SessionFactory
 from tgshop.domain.schemas import OrderOut
 
 from .notifier import Notifier
+
+log = logging.getLogger(__name__)
 
 # What the customer reads about a payment whose invoice payload did not verify. aiogram-stars
 # gives its own reason, in English, and leaves the payment's order id empty.
@@ -86,3 +91,29 @@ class RefundNotices:
             attempts=refund.attempts,
             last_error=refund.last_error,
         )
+
+
+async def queue_old_refunds(engine: AsyncEngine, stars: StarsPayments) -> list[Refund]:
+    """Queue with aiogram-stars the refunds still ``pending`` in ``refunds``, the table of the
+    outbox the shop had before. aiogram-stars keeps one refund per charge, so running this at
+    every start queues each of them once."""
+    async with engine.connect() as conn:
+        if not await conn.run_sync(lambda sync: inspect(sync).has_table("refunds")):
+            return []
+        rows = await conn.execute(
+            text(
+                "SELECT telegram_payment_charge_id, user_id, reason FROM refunds"
+                " WHERE status = 'pending' ORDER BY id"
+            )
+        )
+        pending = rows.all()
+    queued: list[Refund] = []
+    for charge_id, user_id, reason in pending:
+        try:
+            queued.append(await stars.refund(charge_id, user_id=user_id, reason=reason))
+        except Exception:
+            # Left pending in the old table, so the next start tries again.
+            log.exception("failed to queue refund %s from the old refunds table", charge_id)
+    if queued:
+        log.info("queued %d refunds from the old refunds table", len(queued))
+    return queued

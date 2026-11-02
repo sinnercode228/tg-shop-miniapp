@@ -23,7 +23,7 @@ from .domain.pricing import PricingRules
 from .payments import TelegramStarsGateway
 from .services.expiry import UnpaidOrderExpiry
 from .services.orders import OrderService
-from .services.refunds import RefundNotices
+from .services.refunds import RefundNotices, queue_old_refunds
 
 
 @dataclass(slots=True)
@@ -47,11 +47,16 @@ class Container:
             admin_ids=self.settings.admin_ids,
             webapp_url=self.settings.webapp_url,
         )
+        # Refunds the shop's own outbox had not sent before the upgrade to aiogram-stars.
+        dp.startup.register(self._queue_old_refunds)
         if self.unpaid_order_expiry is not None:
             # Tied to polling, so a separate `--mode api` process never sweeps as well.
             dp.startup.register(self.unpaid_order_expiry.start)
             dp.shutdown.register(self.unpaid_order_expiry.stop)
         return dp
+
+    async def _queue_old_refunds(self) -> None:
+        await queue_old_refunds(self.engine, self.stars)
 
     def api(self) -> FastAPI:
         return create_app(

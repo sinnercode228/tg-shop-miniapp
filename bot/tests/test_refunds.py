@@ -13,6 +13,7 @@ from aiogram.methods.base import TelegramMethod, TelegramType
 from aiogram_stars import PaymentStatus, RefundPolicy, RefundStatus
 from aiogram_stars.sqlalchemy import SqlAlchemyStorage
 from pydantic import ValidationError
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -21,6 +22,7 @@ from tgshop.bot.factory import create_dispatcher
 from tgshop.bot.handlers.payments import create_stars
 from tgshop.config import Settings
 from tgshop.container import build_container, refund_policy
+from tgshop.db.repository import OrderRepository
 from tgshop.db.session import SessionFactory, init_models
 from tgshop.domain.catalog import Catalog
 from tgshop.domain.enums import OrderStatus
@@ -28,7 +30,7 @@ from tgshop.domain.errors import InvalidTransition
 from tgshop.domain.pricing import PricingRules
 from tgshop.domain.schemas import OrderCreate, OrderOut
 from tgshop.services.orders import Customer, OrderService
-from tgshop.services.refunds import RefundOut
+from tgshop.services.refunds import RefundOut, queue_old_refunds
 
 from .conftest import (
     ADMIN_ID,
@@ -250,6 +252,85 @@ async def test_refund_between_another_refunds_read_and_write_is_refused(
     assert file_telegram.refunds == [(USER_ID, "charge-1")]
 
 
+# The outbox table the shop had before aiogram-stars sent its refunds.
+OLD_REFUNDS = """
+CREATE TABLE refunds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER REFERENCES orders (id),
+    telegram_payment_charge_id VARCHAR(128) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL,
+    amount INTEGER NOT NULL,
+    reason VARCHAR(200),
+    status VARCHAR(24) NOT NULL,
+    attempts INTEGER NOT NULL,
+    next_attempt_at DATETIME NOT NULL,
+    last_error TEXT,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
+)
+"""
+
+
+async def add_old_refunds(
+    engine: AsyncEngine, *rows: tuple[int | None, str, str | None, str]
+) -> None:
+    """Create the old ``refunds`` table with ``(order_id, charge_id, reason, status)`` rows."""
+    async with engine.begin() as conn:
+        await conn.execute(text(OLD_REFUNDS))
+        for order_id, charge_id, reason, status in rows:
+            await conn.execute(
+                text(
+                    "INSERT INTO refunds (order_id, telegram_payment_charge_id, user_id, amount,"
+                    " reason, status, attempts, next_attempt_at, created_at, updated_at)"
+                    " VALUES (:order_id, :charge_id, :user_id, 100, :reason, :status, 1,"
+                    " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "order_id": order_id,
+                    "charge_id": charge_id,
+                    "user_id": USER_ID,
+                    "reason": reason,
+                    "status": status,
+                },
+            )
+
+
+async def test_refunds_still_pending_in_the_old_refunds_table_are_queued(
+    service: OrderService,
+    session_factory: SessionFactory,
+    engine: AsyncEngine,
+    telegram: Telegram,
+    notifier: FakeNotifier,
+) -> None:
+    order = await pay(service, await stars_order(service), "charge-admin")
+    async with session_factory() as session, session.begin():
+        # Refunded before the upgrade: the old outbox had its row, aiogram-stars has none.
+        await OrderRepository(session).move_status(order.id, OrderStatus.PAID, OrderStatus.REFUNDED)
+    await add_old_refunds(
+        engine,
+        (order.id, "charge-admin", None, "pending"),
+        (None, "late-charge", ALREADY_CANCELLED, "pending"),
+        (None, "charge-sent", None, "done"),
+        (None, "charge-failed", None, "failed"),
+    )
+
+    queued = await queue_old_refunds(engine, telegram.stars)
+    await telegram.send_refunds()
+
+    assert [r.charge_id for r in queued] == ["charge-admin", "late-charge"]
+    assert telegram.refunds == [(USER_ID, "charge-admin"), (USER_ID, "late-charge")]
+    assert [o.id for o in notifier.refunded] == [order.id]
+    assert notifier.returned == [(USER_ID, ALREADY_CANCELLED)]
+
+    await queue_old_refunds(engine, telegram.stars)  # the next start
+    assert await telegram.send_refunds() == [], "aiogram-stars keeps one refund per charge"
+    assert len(telegram.refunds) == 2
+
+
+async def test_no_old_refunds_table_queues_nothing(engine: AsyncEngine, telegram: Telegram) -> None:
+    assert await queue_old_refunds(engine, telegram.stars) == []
+
+
 class SignallingSession(RecordingSession):
     """Puts the charge id of every refund Telegram accepted on ``refunded``."""
 
@@ -424,9 +505,13 @@ async def test_bot_sends_refunds_while_it_polls(monkeypatch: pytest.MonkeyPatch)
             )
         ], "REFUND_* reach aiogram-stars"
 
+        container.bot.session = RecordingSession()
+        await add_old_refunds(container.engine, (None, "charge-before-upgrade", None, "pending"))
+
         dp = container.dispatcher()
         await dp.emit_startup(bot=container.bot)
         assert container.stars.running
+        assert await container.stars.get_refund("charge-before-upgrade") is not None
         await dp.emit_shutdown()
         assert not container.stars.running
     finally:
