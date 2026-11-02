@@ -121,7 +121,7 @@ Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN` и `STARS_SEC
 Проверки, те же, что в [CI](.github/workflows/ci.yml) (Python 3.12 и 3.14, Node 22):
 
 ```bash
-(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 149 тестов, покрытие 95 %
+(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 157 тестов, покрытие 95 %
 (cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 42 теста vitest
 ```
 
@@ -136,7 +136,7 @@ Docker: `cp bot/.env.example bot/.env`, вписать `BOT_TOKEN` и `STARS_SEC
 - Mini App не знает о сроке оплаты. Если окно оплаты закрыли, страница заказа пишет, что оплатить можно позже из истории заказов ([`OrderPage.tsx:111`](webapp/src/pages/OrderPage.tsx#L111)), и срока не показывает.
 - Бот принимает заказы через `web_app_data` ([`handlers/webapp.py`](bot/tgshop/bot/handlers/webapp.py)), а `/start` присылает нужную для этого кнопку reply-клавиатуры ([`handlers/common.py:16`](bot/tgshop/bot/handlers/common.py#L16)), но Mini App нигде не вызывает `sendData`: в [`telegram/sdk.ts:69`](webapp/src/telegram/sdk.ts#L69) метод только объявлен.
 - Схема создаётся через `create_all` на старте ([`db/session.py:35`](bot/tgshop/db/session.py#L35)), миграций нет. Таблица `refunds` от outbox, который был в магазине до aiogram-stars, остаётся в обновлённой базе, а её строки в статусе `pending` бот при старте ставит в очередь aiogram-stars (`queue_old_refunds` в [`services/refunds.py`](bot/tgshop/services/refunds.py)).
-- Покрытие [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) тестами — 73 %.
+- Покрытие [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) тестами — 77 %.
 - Демо-API сохраняет названия позиций и фасовку на русском ([`api/mock.ts:162`](webapp/src/api/mock.ts#L162)); в английском режиме список заказов ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) и фасовка на странице заказа ([`OrderPage.tsx:161`](webapp/src/pages/OrderPage.tsx#L161)) показывают их по-русски.
 - Регулярка телефона написана трижды: [`domain/schemas.py:15`](bot/tgshop/domain/schemas.py#L15), [`api/mock.ts:22`](webapp/src/api/mock.ts#L22), [`pages/CheckoutPage.tsx:15`](webapp/src/pages/CheckoutPage.tsx#L15).
 

@@ -121,7 +121,7 @@ Docker: `cp bot/.env.example bot/.env`, set `BOT_TOKEN` and `STARS_SECRET`, then
 Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Node 22):
 
 ```bash
-(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 149 tests, 95 % coverage
+(cd bot && pytest --cov && ruff check . && ruff format --check . && mypy)          # 157 tests, 95 % coverage
 (cd webapp && npm run lint && npx prettier --check . && npm test && npm run build)  # 42 vitest tests
 ```
 
@@ -135,7 +135,7 @@ Checks, the same as in [CI](.github/workflows/ci.yml) (Python 3.12 and 3.14, Nod
 - The Mini App does not know about the payment time limit. After the payment sheet is closed, the order page says the order can be paid later from the order history ([`OrderPage.tsx:111`](webapp/src/pages/OrderPage.tsx#L111)) and shows no deadline.
 - The bot accepts orders as `web_app_data` ([`handlers/webapp.py`](bot/tgshop/bot/handlers/webapp.py)), and `/start` sends the reply-keyboard button that launch mode needs ([`handlers/common.py:16`](bot/tgshop/bot/handlers/common.py#L16)), but the Mini App never calls `sendData`: [`telegram/sdk.ts:69`](webapp/src/telegram/sdk.ts#L69) only declares it.
 - The schema comes from `create_all` at startup ([`db/session.py:35`](bot/tgshop/db/session.py#L35)); there are no migrations. The `refunds` table of the outbox the shop had before aiogram-stars stays in an upgraded database, and the bot queues its `pending` rows with aiogram-stars when it starts (`queue_old_refunds` in [`services/refunds.py`](bot/tgshop/services/refunds.py)).
-- [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) is at 73 % test coverage.
+- [`handlers/admin.py`](bot/tgshop/bot/handlers/admin.py) is at 77 % test coverage.
 - The demo API saves item titles and variant labels in Russian ([`api/mock.ts:162`](webapp/src/api/mock.ts#L162)); in English mode the order list ([`OrdersPage.tsx:68`](webapp/src/pages/OrdersPage.tsx#L68)) and the variant label on the order page ([`OrderPage.tsx:161`](webapp/src/pages/OrderPage.tsx#L161)) still show them in Russian.
 - The phone regex is written three times: [`domain/schemas.py:15`](bot/tgshop/domain/schemas.py#L15), [`api/mock.ts:22`](webapp/src/api/mock.ts#L22), [`pages/CheckoutPage.tsx:15`](webapp/src/pages/CheckoutPage.tsx#L15).
 
